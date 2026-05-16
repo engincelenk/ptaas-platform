@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nest-api
+  namespace: ptaas-prod
+  labels:
+    app: nest-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nest-api
+  template:
+    metadata:
+      labels:
+        app: nest-api
+    spec:
+      containers:
+        - name: api
+          image: ECR_REGISTRY/ptaas-api:latest
+          ports:
+            - containerPort: 3001
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          envFrom:
+            - secretRef:
+                name: ptaas-api-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nest-api-svc
+  namespace: ptaas-prod
+spec:
+  selector:
+    app: nest-api
+  ports:
+    - port: 80
+      targetPort: 3001
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nest-api-hpa
+  namespace: ptaas-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nest-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scanner-egress-policy
+  namespace: scanners
+spec:
+  podSelector:
+    matchLabels:
+      role: scanner
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+    - to:
+        - podSelector:
+            matchLabels:
+              app: nest-api
+      ports:
+        - port: 3001

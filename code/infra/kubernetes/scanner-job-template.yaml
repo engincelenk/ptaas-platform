@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: scanner-web-SCAN_ID
+  namespace: scanners
+  labels:
+    role: scanner
+    scan-id: SCAN_ID
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        role: scanner
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: scanner
+          image: ECR_REGISTRY/ptaas-scanner:latest
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: SCAN_ID
+              value: "SCAN_ID"
+            - name: PROJECT_ID
+              value: "PROJECT_ID"
+            - name: TENANT_ID
+              value: "TENANT_ID"
+            - name: TARGETS
+              value: "TARGETS_JSON"
+            - name: SCAN_TYPE
+              value: "WEB_ONLY"
+            - name: API_URL
+              value: "http://nest-api-svc.ptaas-prod.svc.cluster.local"
+            - name: INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: scanner-secrets
+                  key: internal-api-key
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
