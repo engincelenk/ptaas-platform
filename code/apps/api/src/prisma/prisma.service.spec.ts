@@ -26,4 +26,21 @@ describe('PrismaService', () => {
     await service.onModuleDestroy();
     expect(spy).toHaveBeenCalled();
   });
+
+  describe('withTenantContext', () => {
+    it('executes fn inside a transaction with set_config', async () => {
+      const mockTx = {
+        $executeRaw: jest.fn().mockResolvedValue(1),
+      };
+      jest.spyOn(service, '$transaction').mockImplementation((fn: any) => fn(mockTx));
+
+      const result = await service.withTenantContext('org_1', async (tx) => {
+        return 'result';
+      });
+
+      expect(service.$transaction).toHaveBeenCalled();
+      expect(mockTx.$executeRaw).toHaveBeenCalled();
+      expect(result).toBe('result');
+    });
+  });
 });

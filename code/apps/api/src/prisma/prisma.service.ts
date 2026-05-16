@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 
 @Injectable()
 export class PrismaService
@@ -14,8 +14,10 @@ export class PrismaService
     await this.$disconnect();
   }
 
-  async withTenantContext<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
-    await this.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
-    return fn();
+  async withTenantContext<T>(tenantId: string, fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    return this.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
+      return fn(tx);
+    });
   }
 }
