@@ -1,13 +1,17 @@
 import { Controller, Param, Patch, Post, Body, UseGuards } from '@nestjs/common';
 import { InternalKeyGuard } from '../auth/guards/internal-key.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { ScansGateway } from './scans.gateway';
 import { UpdateScanStatusDto, CreateFindingFromScannerDto } from './dto/scanner-callback.dto';
-import { ScanStatus } from '@prisma/client';
+import { Prisma, ScanStatus } from '@prisma/client';
 
 @Controller('internal/scans')
 @UseGuards(InternalKeyGuard)
 export class ScansInternalController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly gateway: ScansGateway,
+  ) {}
 
   @Patch(':scanId/status')
   async updateStatus(
@@ -23,7 +27,21 @@ export class ScansInternalController {
     if (dto.error) {
       data.error = dto.error;
     }
-    return this.prisma.scan.update({ where: { id: scanId }, data });
+
+    const scan = await this.prisma.scan.update({
+      where: { id: scanId },
+      data,
+    });
+
+    // WebSocket-Event an alle Clients des Tenants
+    this.gateway.emitToTenant(scan.tenantId, 'scan:status_updated', {
+      scanId,
+      projectId: scan.projectId,
+      status: scan.status,
+      completedAt: scan.completedAt,
+    });
+
+    return scan;
   }
 
   @Post(':scanId/findings')
@@ -33,10 +51,10 @@ export class ScansInternalController {
   ) {
     const scan = await this.prisma.scan.findUniqueOrThrow({
       where: { id: scanId },
-      select: { tenantId: true },
+      select: { tenantId: true, projectId: true },
     });
 
-    return this.prisma.finding.create({
+    const finding = await this.prisma.finding.create({
       data: {
         scanId,
         projectId: dto.projectId,
@@ -52,10 +70,23 @@ export class ScansInternalController {
         affectedComponent: dto.affected_component,
         proofOfConcept: dto.proof_of_concept,
         remediation: dto.remediation,
-        rawOutput: dto.raw_output,
+        rawOutput: dto.raw_output as Prisma.InputJsonValue | undefined,
         checkVersion: dto.check_version,
         targetTechStack: dto.target_tech_stack ?? [],
       },
     });
+
+    // WebSocket-Event: neues Finding für diesen Scan
+    this.gateway.emitToTenant(scan.tenantId, 'scan:finding_created', {
+      scanId,
+      projectId: scan.projectId,
+      finding: {
+        id: finding.id,
+        title: finding.title,
+        severity: finding.severity,
+      },
+    });
+
+    return finding;
   }
 }
