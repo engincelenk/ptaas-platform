@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: PTaaS
+    orgId: 1
+    folder: PTaaS
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

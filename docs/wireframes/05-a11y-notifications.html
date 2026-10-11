@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PTaaS Wireframes — A11y & Notifications</title>
+<style>
+:root {
+  --bg: #ffffff; --bg-2: #f8f8f7; --bg-3: #f0efe8;
+  --text: #1a1a18; --text-2: #5f5e5a; --text-3: #888780;
+  --border: rgba(0,0,0,0.12); --border-2: rgba(0,0,0,0.20);
+  --accent: #e86d30; --accent-h: #d45f22;
+  --danger: #dc2626; --danger-bg: #fef2f2;
+  --warning: #d97706; --warning-bg: #fffbeb;
+  --success: #16a34a; --success-bg: #f0fdf4;
+  --info: #2563eb; --info-bg: #eff6ff;
+  --focus: #2563eb;
+  --r: 8px; --r-lg: 12px; --sidebar: 220px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: 'SF Mono', 'Fira Code', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: var(--bg-3); }
+
+.topnav { background: #1a1a18; padding: 0 24px; display: flex; align-items: center; height: 44px; position: sticky; top: 0; z-index: 200; }
+.topnav-title { color: #fff; font-weight: 700; font-size: 13px; letter-spacing: 0.05em; margin-right: 32px; }
+.topnav-title span { color: var(--accent); }
+.tab { padding: 0 14px; height: 44px; display: flex; align-items: center; color: rgba(255,255,255,0.5); font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+.tab:hover { color: rgba(255,255,255,0.8); }
+.tab.active { color: #fff; border-bottom-color: var(--accent); }
+.tab-scroll { display: flex; overflow-x: auto; }
+.tab-scroll::-webkit-scrollbar { display: none; }
+
+.shell { display: flex; height: calc(100vh - 44px); }
+.sidebar { width: var(--sidebar); background: var(--bg); border-right: 1px solid var(--border); padding: 16px 0; display: flex; flex-direction: column; flex-shrink: 0; }
+.ws-header { padding: 0 16px 16px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.ws-name { font-size: 13px; font-weight: 700; color: var(--text); }
+.nav-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: var(--r); font-size: 13px; color: var(--text-2); cursor: pointer; }
+.nav-item:hover { background: var(--bg-2); }
+.nav-item.active { background: #fff3ee; color: var(--accent); font-weight: 600; }
+.nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+.nav-section { padding: 0 8px; margin-bottom: 12px; }
+.nav-label { font-size: 10px; font-weight: 700; color: var(--text-3); letter-spacing: 0.08em; text-transform: uppercase; padding: 0 8px; margin-bottom: 4px; }
+.sidebar-footer { margin-top: auto; padding: 12px 16px; border-top: 1px solid var(--border); }
+.avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+
+.main { flex: 1; overflow-y: auto; position: relative; }
+.page { padding: 24px 28px; display: none; }
+.page.active { display: block; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--r); font-size: 13px; font-weight: 600; cursor: pointer; border: 1.5px solid transparent; transition: all 0.15s; }
+.btn:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.btn-primary { background: var(--accent); color: #fff; border-color: transparent; }
+.btn-primary:hover { background: var(--accent-h); }
+.btn-secondary { background: transparent; color: var(--text); border-color: var(--border-2); }
+.btn-secondary:hover { background: var(--bg-2); }
+.btn-icon { padding: 8px; background: transparent; color: var(--text-2); border-color: transparent; position: relative; }
+.btn-icon:hover { background: var(--bg-2); }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+
+.section-card { background: var(--bg); border-radius: var(--r-lg); border: 1px solid var(--border); padding: 20px; margin-bottom: 16px; }
+.section-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 14px; }
+
+/* Focus ring visualization */
+.focus-ring { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* Notification flyout */
+.app-topbar { background: var(--bg); border-bottom: 1px solid var(--border); padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+.app-bar-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.app-bar-right { display: flex; align-items: center; gap: 4px; }
+.notif-trigger { position: relative; }
+.notif-count { position: absolute; top: 4px; right: 4px; width: 16px; height: 16px; background: var(--danger); border-radius: 50%; font-size: 9px; font-weight: 700; color: #fff; display: flex; align-items: center; justify-content: center; }
+.flyout { position: absolute; right: 0; top: calc(100% + 8px); width: 360px; background: var(--bg); border: 1.5px solid var(--border-2); border-radius: var(--r-lg); box-shadow: 0 8px 32px rgba(0,0,0,0.12); z-index: 100; overflow: hidden; }
+.flyout-header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.flyout-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.flyout-mark-all { font-size: 12px; color: var(--accent); cursor: pointer; background: none; border: none; }
+.flyout-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
+.flyout-item:last-child { border-bottom: none; }
+.flyout-item:hover { background: var(--bg-2); }
+.flyout-item:focus { background: var(--info-bg); outline: 2px solid var(--focus); outline-offset: -2px; }
+.flyout-item.unread { background: #fafafe; }
+.flyout-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--info); flex-shrink: 0; margin-top: 5px; }
+.flyout-dot.empty { background: transparent; }
+.flyout-text { flex: 1; font-size: 13px; color: var(--text); line-height: 1.5; }
+.flyout-time { font-size: 11px; color: var(--text-3); white-space: nowrap; flex-shrink: 0; margin-top: 1px; }
+.flyout-footer { padding: 10px 16px; border-top: 1px solid var(--border); text-align: center; }
+.flyout-see-all { font-size: 12px; color: var(--accent); cursor: pointer; background: none; border: none; }
+
+/* Aria annotation */
+.aria-note { display: inline-block; font-family: var(--mono); font-size: 10px; background: #1a1a18; color: #86efac; padding: 2px 6px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+.aria-val { color: #fde68a; }
+
+/* Table */
+.table { width: 100%; border-collapse: collapse; }
+.table th { font-size: 11px; font-weight: 600; color: var(--text-3); text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); letter-spacing: 0.04em; text-transform: uppercase; }
+.table td { font-size: 13px; color: var(--text-2); padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: none; }
+.table tr:hover td { background: var(--bg-2); }
+
+/* Visually hidden (real, not display:none) */
+.vh { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+/* Badge */
+.badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.badge-critical { background: var(--danger-bg); color: #991b1b; }
+.badge-high { background: #fff7ed; color: #c2410c; }
+.badge-medium { background: var(--warning-bg); color: #92400e; }
+
+/* Status select */
+.status-select { border: none; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 2px 8px; cursor: pointer; outline: none; }
+.status-select:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* A11y checklist */
+.check-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.check-item:last-child { border-bottom: none; }
+.check-icon { width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.check-pass { background: var(--success-bg); }
+.check-warn { background: var(--warning-bg); }
+.check-body { flex: 1; }
+.check-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.check-desc { font-size: 12px; color: var(--text-2); margin-top: 2px; line-height: 1.5; }
+.check-tag { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; margin-left: 6px; }
+.tag-pass { background: var(--success-bg); color: #166534; }
+.tag-warn { background: var(--warning-bg); color: #92400e; }
+.tag-dev { background: var(--info-bg); color: #1d4ed8; }
+
+/* Focus order */
+.focus-order { display: flex; flex-direction: column; gap: 6px; }
+.fo-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--r); background: var(--bg-2); }
+.fo-num { width: 24px; height: 24px; border-radius: 50%; background: var(--info); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.fo-desc { font-size: 13px; color: var(--text); }
+.fo-role { font-size: 11px; color: var(--text-3); margin-left: auto; font-family: var(--mono); }
+
+/* Persona toggle accessible */
+.persona-toggle { display: inline-flex; border: 1.5px solid var(--border-2); border-radius: var(--r); overflow: hidden; }
+.persona-btn { padding: 6px 14px; font-size: 12px; font-weight: 600; color: var(--text-2); cursor: pointer; background: var(--bg); border: none; }
+.persona-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.persona-btn:focus-visible { outline: 3px solid var(--focus); outline-offset: -1px; z-index: 1; }
+
+/* Live region snackbar */
+.snackbar { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1a1a18; color: #fff; padding: 10px 20px; border-radius: 999px; font-size: 13px; font-weight: 500; box-shadow: 0 4px 16px rgba(0,0,0,0.2); display: flex; align-items: center; gap: 8px; }
+.snackbar svg { width: 16px; height: 16px; }
+
+.note { font-size: 11px; color: var(--text-3); background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 8px 10px; margin-top: 8px; line-height: 1.5; }
+.code-inline { font-family: var(--mono); font-size: 11px; background: var(--bg-3); padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="topnav-title">PTaaS <span>·</span> A11y & Notifications</div>
+  <div class="tab-scroll">
+    <div class="tab active" onclick="show('flyout')">Notification Flyout</div>
+    <div class="tab" onclick="show('flyout-focus')">Flyout Fokus-State</div>
+    <div class="tab" onclick="show('table-a11y')">Findings Table A11y</div>
+    <div class="tab" onclick="show('persona-a11y')">Persona Toggle A11y</div>
+    <div class="tab" onclick="show('status-live')">Live Region</div>
+    <div class="tab" onclick="show('checklist')">A11y Checklist</div>
+    <div class="tab" onclick="show('focus-order')">Fokus-Reihenfolge</div>
+  </div>
+</nav>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="ws-header"><div class="ws-name">ACME Security</div></div>
+    <div class="nav-section">
+      <div class="nav-item active"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="2"/></svg>Dashboard</div>
+      <div class="nav-item"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M3 8h10M3 12h6"/></svg>Findings</div>
+      <div class="nav-item"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/></svg>Scans</div>
+    </div>
+    <div class="sidebar-footer"><div style="display:flex;align-items:center;gap:8px"><div class="avatar">AM</div><span style="font-size:12px;color:var(--text-2)">Anna M.</span></div></div>
+  </aside>
+
+  <div class="main">
+
+    <!-- NOTIFICATION FLYOUT (closed) + (open) -->
+    <div class="page active" id="page-flyout">
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">Notification Flyout</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:20px">Disclosure Pattern · ARIA: <span class="code-inline">aria-haspopup="dialog"</span> <span class="code-inline">aria-expanded</span></div>
+
+      <div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+        <!-- Closed state -->
+        <div class="section-card">
+          <div class="section-title">Status: Geschlossen <span class="aria-note">aria-expanded=<span class="aria-val">"false"</span></span></div>
+          <!-- Mock app topbar -->
+          <div class="app-topbar" style="position:relative;border-radius:var(--r) var(--r) 0 0;margin:-20px -20px 20px">
+            <div class="app-bar-title">Dashboard</div>
+            <div class="app-bar-right">
+              <button class="btn btn-icon" aria-label="Benachrichtigungen (3 ungelesen)" aria-haspopup="dialog" aria-expanded="false" style="position:relative">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 2a6 6 0 016 6c0 3 .6 4.5 1.5 5.5H2.5C3.4 12.5 4 11 4 8a6 6 0 016-6z"/><path d="M8 16a2 2 0 004 0"/></svg>
+                <span class="notif-count" aria-hidden="true">3</span>
+              </button>
+              <button class="btn btn-icon" aria-label="Einstellungen">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="3"/><path d="M10 1v2M10 17v2M1 10h2M17 10h2"/></svg>
+              </button>
+            </div>
+          </div>
+          <p style="font-size:13px;color:var(--text-2);line-height:1.5">Klick oder Enter öffnet Flyout. Badge ist <span class="code-inline">aria-hidden="true"</span> — Count steckt im aria-label des Buttons.</p>
+          <div style="margin-top:12px;background:var(--bg-2);border-radius:var(--r);padding:10px">
+            <div class="code-inline" style="display:block;font-size:11px;line-height:1.8">button[aria-label="Benachrichtigungen (3 ungelesen)"]<br>  aria-haspopup="dialog"<br>  aria-expanded="false"<br>span.count[aria-hidden="true"] → "3"</div>
+          </div>
+        </div>
+
+        <!-- Open state -->
+        <div class="section-card" style="position:relative">
+          <div class="section-title">Status: Geöffnet <span class="aria-note">aria-expanded=<span class="aria-val">"true"</span></span></div>
+          <!-- Mock topbar with open flyout -->
+          <div style="position:relative">
+            <div class="app-topbar" style="position:relative;border-radius:var(--r) var(--r) 0 0;margin:-20px -20px 0">
+              <div class="app-bar-title">Dashboard</div>
+              <div class="app-bar-right">
+                <div class="notif-trigger" style="position:relative">
+                  <button class="btn btn-icon focus-ring" aria-label="Benachrichtigungen (3 ungelesen)" aria-haspopup="dialog" aria-expanded="true" style="position:relative">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 2a6 6 0 016 6c0 3 .6 4.5 1.5 5.5H2.5C3.4 12.5 4 11 4 8a6 6 0 016-6z"/><path d="M8 16a2 2 0 004 0"/></svg>
+                  </button>
+                  <!-- Flyout -->
+                  <div class="flyout" role="dialog" aria-label="Benachrichtigungen" style="position:absolute;right:-8px;top:36px;width:300px">
+                    <div class="flyout-header">
+                      <div class="flyout-title">Benachrichtigungen</div>
+                      <button class="flyout-mark-all">Alle gelesen</button>
+                    </div>
+                    <div class="flyout-item unread" tabindex="0" role="button">
+                      <div class="flyout-dot"></div>
+                      <div class="flyout-text"><strong>Critical:</strong> SQL Injection entdeckt</div>
+                      <div class="flyout-time">2h</div>
+                    </div>
+                    <div class="flyout-item unread" tabindex="0" role="button">
+                      <div class="flyout-dot"></div>
+                      <div class="flyout-text"><strong>Scan:</strong> api.acme abgeschlossen</div>
+                      <div class="flyout-time">3h</div>
+                    </div>
+                    <div class="flyout-item" tabindex="0" role="button">
+                      <div class="flyout-dot empty"></div>
+                      <div class="flyout-text">JWT-Finding geschlossen</div>
+                      <div class="flyout-time">1d</div>
+                    </div>
+                    <div class="flyout-footer">
+                      <button class="flyout-see-all">Alle Benachrichtigungen ansehen →</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style="height:280px;background:var(--bg-2);border-radius:0 0 var(--r) var(--r);"></div>
+          </div>
+        </div>
+      </div>
+      <div class="note">ESC schließt Flyout und gibt Fokus zurück an Trigger-Button. Tab-Reihenfolge: Trigger → Mark-All → Item 1 → Item 2 → Item 3 → See All → (ESC: Trigger).</div>
+    </div>
+
+    <!-- FLYOUT FOCUS STATES -->
+    <div class="page" id="page-flyout-focus">
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:20px">Flyout — Keyboard Navigation</div>
+
+      <div class="section-card">
+        <div class="section-title">Tab-Reihenfolge im offenen Flyout</div>
+        <div class="focus-order">
+          <div class="fo-row">
+            <div class="fo-num">1</div>
+            <div class="fo-desc">Bell-Button (Trigger) — bleibt in DOM, nicht disabled</div>
+            <div class="fo-role">button[aria-expanded="true"]</div>
+          </div>
+          <div class="fo-row" style="background:var(--info-bg);border:1.5px solid #bfdbfe">
+            <div class="fo-num">2</div>
+            <div class="fo-desc">„Alle gelesen" — erster Fokus im Dialog</div>
+            <div class="fo-role">button</div>
+          </div>
+          <div class="fo-row">
+            <div class="fo-num">3</div>
+            <div class="fo-desc">Notification Item 1 (Critical)</div>
+            <div class="fo-role">div[role="button"][tabindex="0"]</div>
+          </div>
+          <div class="fo-row">
+            <div class="fo-num">4</div>
+            <div class="fo-desc">Notification Item 2 (Scan)</div>
+            <div class="fo-role">div[role="button"][tabindex="0"]</div>
+          </div>
+          <div class="fo-row">
+            <div class="fo-num">5</div>
+            <div class="fo-desc">Notification Item 3 (JWT)</div>
+            <div class="fo-role">div[role="button"][tabindex="0"]</div>
+          </div>
+          <div class="fo-row">
+            <div class="fo-num">6</div>
+            <div class="fo-desc">„Alle ansehen →"</div>
+            <div class="fo-role">button</div>
+          </div>
+          <div class="fo-row" style="background:var(--warning-bg)">
+            <div class="fo-num" style="background:var(--warning)">ESC</div>
+            <div class="fo-desc">Flyout schließen → Fokus zurück zu Schritt 1</div>
+            <div class="fo-role">Focus trap → Bell-Button</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Focus ring demo -->
+      <div class="section-card">
+        <div class="section-title">Fokus-Ring Appearance</div>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <button class="btn btn-primary focus-ring">Primary Button</button>
+          <button class="btn btn-secondary focus-ring">Secondary</button>
+          <button class="btn btn-icon focus-ring" aria-label="Demo Icon">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 2a6 6 0 016 6c0 3 .6 4.5 1.5 5.5H2.5C3.4 12.5 4 11 4 8a6 6 0 016-6z"/></svg>
+          </button>
+        </div>
+        <p style="font-size:12px;color:var(--text-3);margin-top:10px"><span class="code-inline">outline: 3px solid #2563eb; outline-offset: 2px</span> · Sichtbar für alle interaktiven Elemente · Verhältnis 3:1 min. (WCAG 2.1 AA)</p>
+      </div>
+    </div>
+
+    <!-- FINDINGS TABLE A11Y -->
+    <div class="page" id="page-table-a11y">
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">Findings Table — Accessibility</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:20px">Inline Status-Selects mit <span class="code-inline">aria-label</span> · Visually-Hidden Labels</div>
+
+      <div class="section-card" style="padding:0;overflow:hidden">
+        <table class="table" aria-label="Findings-Übersicht — 23 Einträge">
+          <thead>
+            <tr>
+              <th scope="col" style="width:32px">
+                <input type="checkbox" aria-label="Alle Findings auswählen" style="width:14px;height:14px">
+              </th>
+              <th scope="col">Finding</th>
+              <th scope="col">Severity</th>
+              <th scope="col">Status</th>
+              <th scope="col">Target</th>
+              <th scope="col">Entdeckt</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <input type="checkbox" aria-label="SQL Injection in /api/users auswählen" style="width:14px;height:14px">
+              </td>
+              <td style="color:var(--text);font-weight:500">SQL Injection in /api/users</td>
+              <td><span class="badge badge-critical">Critical</span></td>
+              <td>
+                <!-- Visually-hidden label für screen reader -->
+                <label class="vh" for="status-1">Status für SQL Injection in /api/users</label>
+                <select id="status-1" class="status-select" style="background:var(--info-bg);color:#1d4ed8">
+                  <option value="open" selected>Offen</option>
+                  <option value="in-progress">In Arbeit</option>
+                  <option value="fixed">Behoben</option>
+                  <option value="fp">False Positive</option>
+                </select>
+                <!-- Live region für Status-Änderungen -->
+                <span role="status" aria-live="polite" class="vh" id="status-1-live"></span>
+              </td>
+              <td style="font-size:12px;color:var(--text-3)">api.acme-corp.de</td>
+              <td style="font-size:12px;color:var(--text-3)">vor 2h</td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" aria-label="JWT ohne Expiry auswählen" style="width:14px;height:14px"></td>
+              <td style="color:var(--text);font-weight:500">JWT ohne Expiry</td>
+              <td><span class="badge badge-high">High</span></td>
+              <td>
+                <label class="vh" for="status-2">Status für JWT ohne Expiry</label>
+                <select id="status-2" class="status-select" style="background:#fff7ed;color:#c2410c">
+                  <option value="open">Offen</option>
+                  <option value="in-progress" selected>In Arbeit</option>
+                  <option value="fixed">Behoben</option>
+                </select>
+                <span role="status" aria-live="polite" class="vh" id="status-2-live"></span>
+              </td>
+              <td style="font-size:12px;color:var(--text-3)">api.acme-corp.de</td>
+              <td style="font-size:12px;color:var(--text-3)">vor 1d</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-card" style="margin-top:16px">
+        <div class="section-title">Annotierter HTML-Output</div>
+        <div style="background:#1a1a18;border-radius:var(--r);padding:14px;font-family:var(--mono);font-size:11px;line-height:1.8;color:#e2e8f0;overflow-x:auto">
+          <span style="color:#888">&lt;!-- Tabelle mit aria-label statt caption --&gt;</span><br>
+          <span style="color:#86efac">&lt;table aria-label="Findings-Übersicht — 23 Einträge"&gt;</span><br><br>
+          <span style="color:#888">&lt;!-- th mit scope für Screen-Reader --&gt;</span><br>
+          <span style="color:#86efac">&lt;th scope="col"&gt;</span>Status<span style="color:#86efac">&lt;/th&gt;</span><br><br>
+          <span style="color:#888">&lt;!-- Visually-hidden label für inline select --&gt;</span><br>
+          <span style="color:#86efac">&lt;label class="vh" for="status-1"&gt;</span><br>
+          &nbsp;&nbsp;Status für SQL Injection in /api/users<br>
+          <span style="color:#86efac">&lt;/label&gt;</span><br>
+          <span style="color:#86efac">&lt;select id="status-1"&gt;...&lt;/select&gt;</span><br><br>
+          <span style="color:#888">&lt;!-- Live region für Änderungs-Feedback --&gt;</span><br>
+          <span style="color:#86efac">&lt;span role="status" aria-live="polite"&gt;</span><br>
+          &nbsp;&nbsp;<span style="color:#fde68a">Status geändert zu: In Bearbeitung</span><br>
+          <span style="color:#86efac">&lt;/span&gt;</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- PERSONA TOGGLE A11Y -->
+    <div class="page" id="page-persona-a11y">
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">Persona Toggle — Accessibility</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:20px"><span class="code-inline">role="group"</span> + <span class="code-inline">aria-pressed</span> statt Radio-Buttons</div>
+
+      <div class="section-card">
+        <div class="section-title">Rendered Component</div>
+        <div role="group" aria-label="Ansicht wählen" style="margin-bottom:16px">
+          <div class="persona-toggle">
+            <button class="persona-btn" aria-pressed="true" onclick="this.setAttribute('aria-pressed','true');this.nextElementSibling.setAttribute('aria-pressed','false')">Developer</button>
+            <button class="persona-btn" aria-pressed="false" onclick="this.setAttribute('aria-pressed','true');this.previousElementSibling.setAttribute('aria-pressed','false')">Engineer</button>
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--text-3)">Klick auf einen Button: aria-pressed wechselt. Space/Enter aktivieren beide Buttons korrekt.</p>
+      </div>
+
+      <div class="section-card">
+        <div class="section-title">ARIA-Annotierter HTML-Output</div>
+        <div style="background:#1a1a18;border-radius:var(--r);padding:14px;font-family:var(--mono);font-size:11px;line-height:1.8;color:#e2e8f0;overflow-x:auto">
+          <span style="color:#888">&lt;!-- Gruppe mit Label --&gt;</span><br>
+          <span style="color:#86efac">&lt;div role="group" aria-label="Ansicht wählen"&gt;</span><br><br>
+          &nbsp;&nbsp;<span style="color:#888">&lt;!-- aria-pressed = toggle state --&gt;</span><br>
+          &nbsp;&nbsp;<span style="color:#86efac">&lt;button aria-pressed=<span style="color:#fde68a">"true"</span>&gt;</span>Developer<span style="color:#86efac">&lt;/button&gt;</span><br>
+          &nbsp;&nbsp;<span style="color:#86efac">&lt;button aria-pressed=<span style="color:#fde68a">"false"</span>&gt;</span>Engineer<span style="color:#86efac">&lt;/button&gt;</span><br><br>
+          <span style="color:#86efac">&lt;/div&gt;</span><br><br>
+          <span style="color:#888">&lt;!-- Screen Reader liest: "Developer Umschalter, gedrückt" --&gt;</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- LIVE REGION / STATUS CHANGE -->
+    <div class="page" id="page-status-live">
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">Live Region — Status-Änderungen</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:20px"><span class="code-inline">role="status"</span> + <span class="code-inline">aria-live="polite"</span> für Status-Updates</div>
+
+      <div class="section-card">
+        <div class="section-title">Snackbar (visuelle Bestätigung)</div>
+        <div class="snackbar" style="position:relative;bottom:auto;left:auto;transform:none;display:inline-flex;width:auto">
+          <svg viewBox="0 0 16 16" fill="none" stroke="#86efac" stroke-width="2.5"><polyline points="3 9 6 12 13 5"/></svg>
+          Status geändert zu: In Bearbeitung
+        </div>
+        <div style="margin-top:16px;background:#1a1a18;border-radius:var(--r);padding:14px;font-family:var(--mono);font-size:11px;line-height:1.8;color:#e2e8f0">
+          <span style="color:#888">&lt;!-- Immer im DOM, initial leer --&gt;</span><br>
+          <span style="color:#86efac">&lt;div role="status" aria-live="polite" aria-atomic="true"&gt;</span><br>
+          &nbsp;&nbsp;<span style="color:#fde68a">&lt;!-- JS schreibt: "Status geändert zu: In Bearbeitung" --&gt;</span><br>
+          <span style="color:#86efac">&lt;/div&gt;</span><br><br>
+          <span style="color:#888">&lt;!-- aria-live="polite": wartet bis Screen Reader fertig --&gt;</span><br>
+          <span style="color:#888">&lt;!-- aria-atomic="true": gesamten Text, nicht nur Diff --&gt;</span>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="section-title">Andere Live-Regionen in PTaaS</div>
+        <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--text-2)">
+          <div style="padding:8px 12px;background:var(--bg-2);border-radius:var(--r);border-left:3px solid var(--accent)">
+            <strong>Scan-Fortschritt:</strong> <span class="code-inline">aria-live="polite"</span> · „Scan 62% abgeschlossen"
+          </div>
+          <div style="padding:8px 12px;background:var(--bg-2);border-radius:var(--r);border-left:3px solid var(--danger)">
+            <strong>Critical Finding mid-scan:</strong> <span class="code-inline">aria-live="assertive"</span> · unterbricht Screen Reader sofort
+          </div>
+          <div style="padding:8px 12px;background:var(--bg-2);border-radius:var(--r);border-left:3px solid var(--success)">
+            <strong>PDF fertig:</strong> <span class="code-inline">aria-live="polite"</span> · „Report bereit — jetzt herunterladen"
+          </div>
+          <div style="padding:8px 12px;background:var(--bg-2);border-radius:var(--r);border-left:3px solid var(--info)">
+            <strong>AI-Analyse läuft:</strong> <span class="code-inline">aria-busy="true"</span> + <span class="code-inline">aria-live="polite"</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- A11Y CHECKLIST -->
+    <div class="page" id="page-checklist">
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">A11y Checklist — WCAG 2.1 AA</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:20px">8 implementiert · 2 Dev-Notes</div>
+
+      <div class="section-card">
+        <div class="check-item">
+          <div class="check-icon check-pass"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="2 7 5 10 10 4"/></svg></div>
+          <div class="check-body">
+            <div class="check-title">Fokus-Ring sichtbar (1.4.11)<span class="check-tag tag-pass">✓ Implementiert</span></div>
+            <div class="check-desc"><span class="code-inline">outline: 3px solid #2563eb</span> auf allen interaktiven Elementen. Kontrast 3:1 vs. Hintergrund.</div>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon check-pass"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="2 7 5 10 10 4"/></svg></div>
+          <div class="check-body">
+            <div class="check-title">Inline-Select Labels (1.3.1)<span class="check-tag tag-pass">✓ Implementiert</span></div>
+            <div class="check-desc">Jeder Status-Select hat <span class="code-inline">&lt;label class="vh"&gt;</span> mit Kontext: „Status für [Finding-Name]".</div>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon check-pass"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="2 7 5 10 10 4"/></svg></div>
+          <div class="check-body">
+            <div class="check-title">Persona Toggle (4.1.2)<span class="check-tag tag-pass">✓ Implementiert</span></div>
+            <div class="check-desc"><span class="code-inline">role="group"</span> + <span class="code-inline">aria-pressed</span> statt CSS-only Toggle. Screen Reader: „Developer Umschalter, gedrückt".</div>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon check-pass"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="2 7 5 10 10 4"/></svg></div>
+          <div class="check-body">
+            <div class="check-title">Notification Flyout (4.1.3, 2.1.1)<span class="check-tag tag-pass">✓ Implementiert</span></div>
+            <div class="check-desc">Disclosure Pattern: <span class="code-inline">aria-haspopup="dialog"</span>, <span class="code-inline">aria-expanded</span>, ESC schließt + Fokus-Return.</div>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon check-pass"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="2 7 5 10 10 4"/></svg></div>
+          <div class="check-body">
+            <div class="check-title">Icon-Only Buttons (1.1.1)<span class="check-tag tag-pass">✓ Implementiert</span></div>
+            <div class="check-desc">Alle Icon-Buttons haben <span class="code-inline">aria-label</span>: „Einstellungen", „Benachrichtigungen (3 ungelesen)", „Abbrechen".</div>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon check-pass"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="2 7 5 10 10 4"/></svg></div>
+          <div class="check-body">
+            <div class="check-title">Live Regions (4.1.3)<span class="check-tag tag-pass">✓ Implementiert</span></div>
+            <div class="check-desc">Status-Änderungen, Scan-Fortschritt, Critical-Alerts als <span class="code-inline">role="status"</span> / <span class="code-inline">aria-live</span>.</div>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon check-pass"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="2 7 5 10 10 4"/></svg></div>
+          <div class="check-body">
+            <div class="check-title">Accordion (4.1.2)<span class="check-tag tag-pass">✓ Implementiert</span></div>
+            <div class="check-desc"><span class="code-inline">aria-expanded="true/false"</span> auf Accordion-Header. <span class="code-inline">aria-controls</span> zeigt auf Body-ID.</div>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon check-pass"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="2 7 5 10 10 4"/></svg></div>
+          <div class="check-body">
+            <div class="check-title">Farbkontrast (1.4.3)<span class="check-tag tag-pass">✓ Implementiert</span></div>
+            <div class="check-desc">Text auf Hintergrund ≥ 4.5:1. Badge-Text: Critical #991b1b auf #fef2f2 → 5.8:1. Accent #e86d30 auf #fff → 3.2:1 (Non-Text).</div>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon check-warn"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#d97706" stroke-width="2"><path d="M6 1L1 11h10z"/><line x1="6" y1="6" x2="6" y2="8"/></svg></div>
+          <div class="check-body">
+            <div class="check-title">Scan-Progress (1.4.3)<span class="check-tag tag-dev">🔧 Dev-Note</span></div>
+            <div class="check-desc">Fortschrittsbalken braucht <span class="code-inline">role="progressbar"</span>, <span class="code-inline">aria-valuenow</span>, <span class="code-inline">aria-valuemin="0"</span>, <span class="code-inline">aria-valuemax="100"</span>.</div>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon check-warn"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#d97706" stroke-width="2"><path d="M6 1L1 11h10z"/><line x1="6" y1="6" x2="6" y2="8"/></svg></div>
+          <div class="check-body">
+            <div class="check-title">PDF-Ring-Progress (1.4.3)<span class="check-tag tag-dev">🔧 Dev-Note</span></div>
+            <div class="check-desc">SVG-Animation braucht <span class="code-inline">prefers-reduced-motion</span>: Animation pausieren wenn User-Präferenz gesetzt. <span class="code-inline">@media (prefers-reduced-motion: reduce)</span>.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FOCUS ORDER -->
+    <div class="page" id="page-focus-order">
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">Fokus-Reihenfolge — Alle Screens</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:20px">2.4.3 Focus Order · Logische Tab-Reihenfolge</div>
+
+      <div class="section-card">
+        <div class="section-title">Dashboard</div>
+        <div class="focus-order">
+          <div class="fo-row"><div class="fo-num">1</div><div class="fo-desc">Sidebar Navigation: Dashboard</div><div class="fo-role">nav a (active)</div></div>
+          <div class="fo-row"><div class="fo-num">2</div><div class="fo-desc">Sidebar Navigation: Scans, Findings, Reports...</div><div class="fo-role">nav a</div></div>
+          <div class="fo-row"><div class="fo-num">3</div><div class="fo-desc">App-Header: Benachrichtigungen</div><div class="fo-role">button</div></div>
+          <div class="fo-row"><div class="fo-num">4</div><div class="fo-desc">App-Header: Einstellungen</div><div class="fo-role">button</div></div>
+          <div class="fo-row"><div class="fo-num">5</div><div class="fo-desc">Banner: „Jetzt ansehen" Button</div><div class="fo-role">button</div></div>
+          <div class="fo-row"><div class="fo-num">6–8</div><div class="fo-desc">Metric Cards (non-interactive, übersprungen)</div><div class="fo-role">div (tabindex=-1)</div></div>
+          <div class="fo-row"><div class="fo-num">9</div><div class="fo-desc">Tabelle: Alle Findings auswählen</div><div class="fo-role">input[type=checkbox]</div></div>
+          <div class="fo-row"><div class="fo-num">10–14</div><div class="fo-desc">Tabelle: Zeilen-Checkboxen + Status-Selects</div><div class="fo-role">input, select</div></div>
+          <div class="fo-row"><div class="fo-num">15</div><div class="fo-desc">Tabelle: „Alle ansehen →" Link</div><div class="fo-role">a</div></div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="section-title">Finding Detail</div>
+        <div class="focus-order">
+          <div class="fo-row"><div class="fo-num">1</div><div class="fo-desc">Breadcrumb: ← Findings</div><div class="fo-role">a</div></div>
+          <div class="fo-row"><div class="fo-num">2</div><div class="fo-desc">Persona Toggle: Developer-Button</div><div class="fo-role">button[aria-pressed]</div></div>
+          <div class="fo-row"><div class="fo-num">3</div><div class="fo-desc">Persona Toggle: Engineer-Button</div><div class="fo-role">button[aria-pressed]</div></div>
+          <div class="fo-row"><div class="fo-num">4</div><div class="fo-desc">Status-Select (inline)</div><div class="fo-role">select</div></div>
+          <div class="fo-row"><div class="fo-num">5</div><div class="fo-desc">AI-Block (non-interactive)</div><div class="fo-role">—</div></div>
+          <div class="fo-row"><div class="fo-num">6–8</div><div class="fo-desc">Fix-Guide Code-Blöcke: Copy-Button</div><div class="fo-role">button</div></div>
+          <div class="fo-row"><div class="fo-num">9</div><div class="fo-desc">Accordion: „Technische Details"</div><div class="fo-role">button[aria-expanded]</div></div>
+          <div class="fo-row"><div class="fo-num">10</div><div class="fo-desc">Inner Tabs: Übersicht / Evidence / Timeline</div><div class="fo-role">button[role="tab"]</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function show(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const page = document.getElementById('page-' + id);
+  if (page) page.classList.add('active');
+  const tabs = document.querySelectorAll('.tab');
+  const tabMap = {
+    'flyout': 0, 'flyout-focus': 1, 'table-a11y': 2,
+    'persona-a11y': 3, 'status-live': 4, 'checklist': 5, 'focus-order': 6
+  };
+  if (tabMap[id] !== undefined) tabs[tabMap[id]].classList.add('active');
+}
+</script>
+</body>
+</html>

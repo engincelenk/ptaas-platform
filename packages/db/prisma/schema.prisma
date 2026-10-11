@@ -1,0 +1,1181 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ──────────────────────────────────────────
+// Identity & Access
+// ──────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  name         String
+  emailVerified           Boolean   @default(false) @map("email_verified")
+  emailVerificationToken  String?   @unique @map("email_verification_token")
+  emailVerificationExpiry DateTime? @map("email_verification_expiry")
+
+  mfaEnabled     Boolean  @default(false) @map("mfa_enabled")
+  mfaSecret      String?  @map("mfa_secret")
+  mfaBackupCodes String[] @map("mfa_backup_codes")
+
+  lockedUntil         DateTime? @map("locked_until")
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+
+  // DSGVO
+  aiConsent   Boolean   @default(false) @map("ai_consent")
+  aiConsentAt DateTime? @map("ai_consent_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships       OrganizationMember[]
+  auditLogs         AuditLog[]
+  projects          Project[]
+  targets           Target[]
+  scans             Scan[]
+  findings          Finding[]
+  createdFindings   Finding[]                   @relation("FindingCreatedBy")
+  invitations       Invitation[]
+  apiKeys           ApiKey[]
+  notifications     Notification[]
+  findingComments         FindingComment[]
+  findingActivities       FindingActivity[]
+  shareTokens             ShareToken[]
+  checkedItems            ChecklistItem[]
+  notificationPreferences UserNotificationPreference[]
+  uploadedEvidences       Evidence[]                   @relation("EvidenceUploadedBy")
+  scopeEntries            ScopeEntry[]                 @relation("ScopeEntryAddedBy")
+  approvedRiskAcceptances RiskAcceptance[]             @relation("RiskAcceptanceApprovedBy")
+  signedOffEngagements    Engagement[]                 @relation("EngagementSignedOffBy")
+  scanSchedules           ScanSchedule[]
+  methodologyProgress     MethodologyProgress[] @relation("MethodologyProgressUser")
+
+  @@map("users")
+}
+
+enum Role {
+  ADMIN
+  SECURITY_ENGINEER
+  DEVELOPER
+  VIEWER
+}
+
+model Organization {
+  id        String  @id @default(cuid())
+  name      String
+  slug      String  @unique
+  logoUrl   String? @map("logo_url")
+
+  // White-Label Branding (M46)
+  brandPrimaryColor String? @map("brand_primary_color")
+  brandCompanyName  String? @map("brand_company_name")
+  brandFooterText   String? @map("brand_footer_text")
+
+  // Multi-Region (M55)
+  dataRegion      String   @default("eu-west-1") @map("data_region")
+  allowedRegions  String[] @map("allowed_regions")
+
+  rateLimit      OrgRateLimit?
+  usageSnapshots UsageSnapshot[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  members      OrganizationMember[]
+  auditLogs    AuditLog[]
+  projects     Project[]
+  targets      Target[]
+  scans        Scan[]
+  findings     Finding[]
+  assets       Asset[]
+  integrations Integration[]
+  invitations  Invitation[]
+  scanPolicies     ScanPolicy[]
+  apiKeys          ApiKey[]
+  threatBriefs     ThreatBrief[]
+  samlConfig       SamlConfig?
+  evidences        Evidence[]
+  scopeEntries     ScopeEntry[]
+  riskAcceptances  RiskAcceptance[]
+  engagements      Engagement[]
+  findingTags      FindingTag[]
+  slaPolicy        SlaPolicy?
+  scanSchedules    ScanSchedule[]
+  methodologies    Methodology[]
+
+  @@map("organizations")
+}
+
+// ──────────────────────────────────────────
+// SAML SSO Config (M52)
+// ──────────────────────────────────────────
+
+model SamlConfig {
+  id             String   @id @default(cuid())
+  organizationId String   @unique @map("organization_id")
+  enabled        Boolean  @default(false)
+  idpEntryPoint  String   @map("idp_entry_point")
+  idpCert        String   @map("idp_cert")   @db.Text
+  spEntityId     String   @map("sp_entity_id")
+  // SAML attribute → PTaaS field mapping
+  attrEmail      String   @default("email")    @map("attr_email")
+  attrFirstName  String   @default("firstName") @map("attr_first_name")
+  attrLastName   String   @default("lastName")  @map("attr_last_name")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("saml_configs")
+}
+
+model ThreatBrief {
+  id           String    @id @default(cuid())
+  weekStart    DateTime  @map("week_start") @db.Date
+  summary      String
+  highlights   Json      @default("[]")
+  emailSentAt  DateTime? @map("email_sent_at")
+  generatedAt  DateTime  @default(now()) @map("generated_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  orgId        String    @map("org_id")
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, weekStart])
+  @@index([orgId])
+  @@map("threat_briefs")
+}
+
+model OrganizationMember {
+  id             String    @id @default(cuid())
+  role           Role      @default(VIEWER)
+  userId         String    @map("user_id")
+  organizationId String    @map("organization_id")
+  invitedAt      DateTime  @default(now()) @map("invited_at")
+  acceptedAt     DateTime? @map("accepted_at")
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("organization_members")
+}
+
+// ──────────────────────────────────────────
+// Projects & Targets (M3)
+// ──────────────────────────────────────────
+
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+model Project {
+  id             String        @id @default(cuid())
+  name           String
+  description    String?
+  status         ProjectStatus @default(ACTIVE)
+  organizationId String        @map("organization_id")
+  createdById    String        @map("created_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation(fields: [createdById], references: [id])
+  targets        Target[]
+  scans          Scan[]
+  findings       Finding[]
+  assets         Asset[]
+  asmScans       AsmScan[]
+  scanStrategies ScanStrategy[]
+  attackPaths    AttackPath[]
+  shareTokens    ShareToken[]
+  checklistItems ChecklistItem[]
+  scopeEntries   ScopeEntry[]
+  engagement     Engagement?
+  scanSchedules  ScanSchedule[]
+  methodologyAssignments MethodologyAssignment[]
+
+  @@index([organizationId])
+  @@map("projects")
+}
+
+// ──────────────────────────────────────────
+// Engagement Management (M62)
+// ──────────────────────────────────────────
+
+model Engagement {
+  id             String    @id @default(cuid())
+  projectId      String    @unique @map("project_id")
+  organizationId String    @map("organization_id")
+  title          String
+  type           String    // WEB_APP | API | MOBILE | NETWORK | CLOUD | RED_TEAM
+  status         String    @default("DRAFT") // DRAFT | ACTIVE | REVIEW | COMPLETED | CANCELLED
+  startDate      DateTime? @map("start_date")
+  endDate        DateTime? @map("end_date")
+  testingHours   Int?      @map("testing_hours")
+  roeText        String?   @db.Text @map("roe_text")
+  scopeNotes     String?   @db.Text @map("scope_notes")
+  signedOffById  String?   @map("signed_off_by_id")
+  signedOffAt    DateTime? @map("signed_off_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  signedOffBy  User?        @relation("EngagementSignedOffBy", fields: [signedOffById], references: [id])
+
+  @@index([organizationId])
+  @@map("engagements")
+}
+
+// ──────────────────────────────────────────
+// Scope Management (M59)
+// ──────────────────────────────────────────
+
+model ScopeEntry {
+  id             String   @id @default(cuid())
+  projectId      String   @map("project_id")
+  organizationId String   @map("organization_id")
+  addedById      String   @map("added_by_id")
+  type           String   // URL | IP | CIDR | DOMAIN
+  value          String
+  inScope        Boolean  @default(true) @map("in_scope")
+  note           String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  addedBy      User         @relation("ScopeEntryAddedBy", fields: [addedById], references: [id])
+
+  @@index([projectId])
+  @@index([organizationId])
+  @@map("scope_entries")
+}
+
+// ──────────────────────────────────────────
+// Pentest Methodology Checklists (M56)
+// ──────────────────────────────────────────
+
+model ChecklistItem {
+  id             String   @id @default(cuid())
+  projectId      String   @map("project_id")
+  organizationId String   @map("organization_id")
+  category       String
+  itemKey        String   @map("item_key")
+  checked        Boolean  @default(false)
+  checkedById    String?  @map("checked_by_id")
+  checkedAt      DateTime? @map("checked_at")
+  note           String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  checkedBy User?   @relation(fields: [checkedById], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, itemKey])
+  @@index([projectId])
+  @@index([organizationId])
+  @@map("checklist_items")
+}
+
+model ShareToken {
+  id           String    @id @default(cuid())
+  token        String    @unique
+  passwordHash String?   @map("password_hash")
+  label        String?
+  expiresAt    DateTime  @map("expires_at")
+  revokedAt    DateTime? @map("revoked_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  projectId   String @map("project_id")
+  createdById String @map("created_by_id")
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("share_tokens")
+}
+
+enum TargetType {
+  DOMAIN
+  SUBDOMAIN
+  IP
+  IP_RANGE
+  URL
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  FAILED
+}
+
+enum VerificationMethod {
+  DNS_TXT
+  HTTP_FILE
+  META_TAG
+}
+
+model Target {
+  id                 String             @id @default(cuid())
+  type               TargetType
+  value              String
+  verificationStatus VerificationStatus @default(PENDING)
+  verificationMethod VerificationMethod?
+  verificationToken  String             @unique @map("verification_token")
+  verifiedAt         DateTime?          @map("verified_at")
+  lastVerifiedAt     DateTime?          @map("last_verified_at")
+
+  projectId      String @map("project_id")
+  organizationId String @map("organization_id")
+  createdById    String @map("created_by_id")
+
+  scheduleEnabled  Boolean   @default(false) @map("schedule_enabled")
+  scheduleCron     String?   @map("schedule_cron")
+  lastScheduledAt  DateTime? @map("last_scheduled_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation(fields: [createdById], references: [id])
+  scans         Scan[]
+  findings      Finding[]
+  asset         Asset?
+  healthChecks  TargetHealthCheck[]
+  scanSchedules ScanSchedule[]
+
+  @@unique([projectId, value])
+  @@index([organizationId])
+  @@index([scheduleEnabled])
+  @@index([projectId])
+  @@map("targets")
+}
+
+model TargetHealthCheck {
+  id             String   @id @default(cuid())
+  statusCode     Int?     @map("status_code")
+  responseTimeMs Int?     @map("response_time_ms")
+  isUp           Boolean  @map("is_up")
+  error          String?
+  checkedAt      DateTime @default(now()) @map("checked_at")
+
+  targetId String @map("target_id")
+  target   Target @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId])
+  @@index([checkedAt])
+  @@map("target_health_checks")
+}
+
+// ──────────────────────────────────────────
+// Scan Engine (M4)
+// ──────────────────────────────────────────
+
+enum ScanStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ScanType {
+  QUICK      // ~5 min, Nuclei common templates, 100 req/s
+  FULL       // ~30-60 min, Nuclei all templates, 30 req/s
+  WEB_CRAWL  // ZAP Spider + Active Scan for JS-rendered pages
+  API_SCAN   // ZAP with OpenAPI/Swagger import → all endpoints
+  RETEST     // Targeted retest of specific findings (M18)
+}
+
+model Scan {
+  id             String     @id @default(cuid())
+  status         ScanStatus @default(QUEUED)
+  type           ScanType   @default(QUICK)
+
+  // Nuclei configuration
+  templateCategories String[] @default(["cves", "misconfigurations", "exposures"]) @map("template_categories")
+  excludePaths       String[] @map("exclude_paths")
+  rateLimit          Int      @default(100) @map("rate_limit")
+
+  // Credentials (AES-256-GCM: "iv_hex:authtag_hex:ciphertext_hex") — never plaintext
+  credentialType  String? @map("credential_type")   // "bearer" | "basic" | "cookie"
+  credentialValue String? @map("credential_value")   // encrypted
+
+  // ZAP-specific fields (WEB_CRAWL / API_SCAN)
+  openApiSpec String? @map("open_api_spec")  // URL or inline YAML/JSON
+  crawlDepth  Int     @default(5) @map("crawl_depth")
+
+  // Live progress
+  progress        Int     @default(0)
+  totalTemplates  Int     @default(0) @map("total_templates")
+  currentActivity String? @map("current_activity")
+
+  // BullMQ job tracking
+  bullJobId String? @map("bull_job_id")
+
+  // Error detail (if FAILED)
+  errorMessage String? @map("error_message")
+
+  // Diff engine: reference to previous completed scan on same target (M11)
+  previousScanId String? @map("previous_scan_id")
+
+  // Custom scan policy (M14)
+  policyId String? @map("policy_id")
+
+  // Retest workflow (M18)
+  retestFindingIds String[] @default([]) @map("retest_finding_ids")
+
+  targetId       String @map("target_id")
+  projectId      String @map("project_id")
+  organizationId String @map("organization_id")
+  createdById    String @map("created_by_id")
+
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  target       Target       @relation(fields: [targetId], references: [id])
+  project      Project      @relation(fields: [projectId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  createdBy    User         @relation(fields: [createdById], references: [id])
+  policy       ScanPolicy?  @relation(fields: [policyId], references: [id])
+  findings     Finding[]
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([targetId])
+  @@index([status])
+  @@map("scans")
+}
+
+// ──────────────────────────────────────────
+// Attack Path Modelling (M20)
+// ──────────────────────────────────────────
+
+model AttackPath {
+  id             String   @id @default(cuid())
+  title          String
+  description    String?
+  nodes          Json     @default("[]")  // AttackNode[]
+  edges          Json     @default("[]")  // AttackEdge[]
+  impactScore    Float?   @map("impact_score")
+  likelihood     String?  // LOW | MEDIUM | HIGH | CRITICAL
+
+  projectId      String   @map("project_id")
+  organizationId String   @map("organization_id")
+
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([organizationId])
+  @@map("attack_paths")
+}
+
+// ──────────────────────────────────────────
+// Scan Strategy (M19)
+// ──────────────────────────────────────────
+
+// ──────────────────────────────────────────
+// Notifications (M22)
+// ──────────────────────────────────────────
+
+model Notification {
+  id        String    @id @default(cuid())
+  type      String    // scan.completed | finding.critical | retest.passed | retest.failed | invitation | finding.kev
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime? @map("read_at")
+
+  userId    String    @map("user_id")
+  orgId     String    @map("org_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([orgId])
+  @@map("notifications")
+}
+
+model ScanStrategy {
+  id             String    @id @default(cuid())
+  status         String    @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED
+  fingerprint    Json?
+  plan           Json      @default("[]")
+  reasoning      String?
+  errorMessage   String?   @map("error_message")
+
+  projectId      String    @map("project_id")
+  organizationId String    @map("organization_id")
+
+  createdAt      DateTime  @default(now()) @map("created_at")
+  completedAt    DateTime? @map("completed_at")
+
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([organizationId])
+  @@map("scan_strategies")
+}
+
+// ──────────────────────────────────────────
+// Findings (M4 stub — full implementation M5)
+// ──────────────────────────────────────────
+
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum FindingStatus {
+  OPEN
+  IN_PROGRESS
+  FIXED
+  VERIFIED
+  CLOSED
+  FALSE_POSITIVE
+  ACCEPTED_RISK
+}
+
+model Finding {
+  id          String        @id @default(cuid())
+  title       String
+  description String?
+  severity    Severity
+  status      FindingStatus @default(OPEN)
+
+  // Nuclei data
+  templateId   String?  @map("template_id")
+  templateName String?  @map("template_name")
+  matchedAt    String?  @map("matched_at")  // URL/endpoint where found
+  nucleiOutput Json?    @map("nuclei_output") // raw nuclei JSON
+
+  // HTTP evidence (truncated — full stored in MinIO)
+  httpRequest  String? @map("http_request")
+  httpResponse String? @map("http_response")
+
+  // Classification
+  cvssScore  Float?   @map("cvss_score")
+  cvssVector String?  @map("cvss_vector")
+  cveIds     String[] @map("cve_ids")
+  cweIds     String[] @map("cwe_ids")
+  owasp      String?  // "A01", "A02", etc.
+
+  // AI analysis (M5)
+  aiExplanation    String?   @map("ai_explanation")
+  aiRemediation    String?   @map("ai_remediation")
+  aiFpScore        Float?    @map("ai_fp_score")        // 0–100 false positive probability
+  aiRiskScore      Float?    @map("ai_risk_score")      // 0–100 severity-adjusted risk
+  aiBusinessImpact String?   @map("ai_business_impact")
+  aiAnalyzedAt     DateTime? @map("ai_analyzed_at")
+
+  // AI Risk Scoring v2 (M49) — composite score incl. EPSS, KEV, SLA, trend
+  riskScoreV2         Float?  @map("risk_score_v2")         // 0–100 composite score
+  riskScoreV2Breakdown Json?  @map("risk_score_v2_breakdown") // { cvss, epss, kev, sla, trend }
+  riskScoreV2At       DateTime? @map("risk_score_v2_at")
+
+  // Diff engine (M11)
+  diffStatus String? @map("diff_status")  // NEW | PERSISTING | RESOLVED
+
+  // CVE Enrichment (M17)
+  epssScore      Float?    @map("epss_score")
+  epssPercentile Float?    @map("epss_percentile")
+  kevListed      Boolean   @default(false) @map("kev_listed")
+  priorityScore  Float?    @map("priority_score")
+  nvdDescription String?   @map("nvd_description")
+  enrichedAt     DateTime? @map("enriched_at")
+
+  // Retest workflow (M18)
+  retestScanId       String?   @map("retest_scan_id")
+  retestStatus       String?   @map("retest_status")       // PENDING | PASSED | FAILED
+  retestRequestedAt  DateTime? @map("retest_requested_at")
+  retestCompletedAt  DateTime? @map("retest_completed_at")
+
+  // Remediation tracking (M28)
+  dueDate      DateTime? @map("due_date")
+
+  // Jira Two-Way Sync (M43)
+  jiraIssueKey String? @map("jira_issue_key")
+
+  // Deduplication (M38)
+  duplicateOfId String? @map("duplicate_of_id")
+  duplicateOf   Finding?  @relation("Duplicates", fields: [duplicateOfId], references: [id], onDelete: SetNull)
+  duplicates    Finding[] @relation("Duplicates")
+
+  scanId         String  @map("scan_id")
+  targetId       String  @map("target_id")
+  projectId      String  @map("project_id")
+  organizationId String  @map("organization_id")
+  assignedToId   String? @map("assigned_to_id")
+  createdById    String  @map("created_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  scan         Scan         @relation(fields: [scanId], references: [id])
+  target       Target       @relation(fields: [targetId], references: [id])
+  project      Project      @relation(fields: [projectId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  assignedTo   User?        @relation(fields: [assignedToId], references: [id])
+  createdBy    User         @relation("FindingCreatedBy", fields: [createdById], references: [id])
+  comments       FindingComment[]
+  activities     FindingActivity[]
+  evidences      Evidence[]
+  riskAcceptance RiskAcceptance?
+  tagAssignments FindingTagAssignment[]
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([scanId])
+  @@index([severity])
+  @@index([status])
+  @@index([assignedToId])
+  @@index([dueDate])
+  @@map("findings")
+}
+
+model FindingComment {
+  id        String   @id @default(cuid())
+  body      String
+  findingId String   @map("finding_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  finding Finding @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([findingId])
+  @@map("finding_comments")
+}
+
+model FindingActivity {
+  id        String   @id @default(cuid())
+  type      String   // status_change | assignee_change | due_date_set | comment | retest_requested | retest_completed
+  payload   Json     @default("{}")
+  findingId String   @map("finding_id")
+  userId    String?  @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  finding Finding @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([findingId])
+  @@map("finding_activities")
+}
+
+model UserNotificationPreference {
+  id        String   @id @default(cuid())
+  eventType String   @map("event_type")
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventType])
+  @@index([userId])
+  @@map("user_notification_preferences")
+}
+
+// ──────────────────────────────────────────
+// Audit Log — immutable
+// ──────────────────────────────────────────
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  action         String
+  resource       String?
+  resourceId     String?  @map("resource_id")
+  metadata       Json?
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  userId         String?  @map("user_id")
+  organizationId String?  @map("organization_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ──────────────────────────────────────────
+// Attack Surface Management (M8)
+// ──────────────────────────────────────────
+
+enum AssetType {
+  SUBDOMAIN
+  IP
+  URL
+}
+
+enum AssetStatus {
+  SUGGESTED  // discovered, not yet added as Target
+  ACTIVE     // confirmed online
+  OFFLINE    // discovered but not responding
+  IGNORED    // user dismissed
+}
+
+enum AsmScanStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Asset {
+  id             String      @id @default(cuid())
+  organizationId String      @map("organization_id")
+  projectId      String      @map("project_id")
+  rootDomain     String      @map("root_domain")
+  value          String
+  type           AssetType   @default(SUBDOMAIN)
+  status         AssetStatus @default(SUGGESTED)
+
+  // HTTP fingerprint
+  httpStatus   Int?     @map("http_status")
+  httpTitle    String?  @map("http_title")
+  httpServer   String?  @map("http_server")
+  technologies String[]
+
+  // DNS
+  ipAddresses String[] @map("ip_addresses")
+  dnsRecords  Json?    @map("dns_records")
+  dnsIssues   String[] @map("dns_issues")
+
+  // Accepted as a Target
+  targetId String? @unique @map("target_id")
+  target   Target? @relation(fields: [targetId], references: [id], onDelete: SetNull)
+
+  discoveredAt DateTime @default(now()) @map("discovered_at")
+  lastSeenAt   DateTime @default(now()) @map("last_seen_at")
+
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, value])
+  @@index([projectId])
+  @@index([status])
+  @@map("assets")
+}
+
+model AsmScan {
+  id             String        @id @default(cuid())
+  organizationId String        @map("organization_id")
+  projectId      String        @map("project_id")
+  rootDomain     String        @map("root_domain")
+  status         AsmScanStatus @default(PENDING)
+  assetsFound    Int           @default(0) @map("assets_found")
+  bullJobId      String?       @map("bull_job_id")
+  startedAt      DateTime?     @map("started_at")
+  completedAt    DateTime?     @map("completed_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("asm_scans")
+}
+
+// ──────────────────────────────────────────
+// Invitations (M12 — Multi-Tenancy)
+// ──────────────────────────────────────────
+
+model Invitation {
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  invitedById    String    @map("invited_by_id")
+  email          String
+  role           Role      @default(VIEWER)
+  token          String    @unique
+  expiresAt      DateTime  @map("expires_at")
+  usedAt         DateTime? @map("used_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation(fields: [invitedById], references: [id])
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("invitations")
+}
+
+// ──────────────────────────────────────────
+// Integrations (M10 — DevSecOps)
+// ──────────────────────────────────────────
+
+enum IntegrationType {
+  WEBHOOK
+  GITHUB
+  JIRA
+  SLACK
+}
+
+model Integration {
+  id             String          @id @default(cuid())
+  organizationId String          @map("organization_id")
+  type           IntegrationType
+  name           String
+  enabled        Boolean         @default(true)
+  configEncrypted String         @map("config_encrypted")
+  events         String[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt     @map("updated_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries   WebhookDelivery[]
+
+  @@unique([organizationId, type, name])
+  @@index([organizationId])
+  @@map("integrations")
+}
+
+model WebhookDelivery {
+  id             String   @id @default(cuid())
+  integrationId  String   @map("integration_id")
+  event          String
+  payload        String
+  status         String   @default("PENDING")
+  responseCode   Int?     @map("response_code")
+  responseBody   String?  @map("response_body")
+  attempts       Int      @default(0)
+  lastAttemptAt  DateTime? @map("last_attempt_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([integrationId])
+  @@index([status])
+  @@map("webhook_deliveries")
+}
+
+// ──────────────────────────────────────────
+// Custom Scan Policies (M14)
+// ──────────────────────────────────────────
+
+model ScanPolicy {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  description    String?
+
+  nucleiTags          String[] @default([]) @map("nuclei_tags")
+  nucleiSeverities    String[] @default([]) @map("nuclei_severities")
+  excludedTemplates   String[] @default([]) @map("excluded_templates")
+  maxDurationSeconds  Int      @default(3600) @map("max_duration_seconds")
+  rateLimit           Int      @default(150) @map("rate_limit")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scans        Scan[]
+
+  @@index([organizationId])
+  @@map("scan_policies")
+}
+
+// ──────────────────────────────────────────
+// API Keys (M15)
+// ──────────────────────────────────────────
+
+// M57 — Billing & Usage Snapshots
+model UsageSnapshot {
+  id           String   @id @default(cuid())
+  orgId        String   @map("org_id")
+  periodStart  DateTime @map("period_start") @db.Date
+  periodEnd    DateTime @map("period_end") @db.Date
+  scanCount    Int      @default(0) @map("scan_count")
+  findingCount Int      @default(0) @map("finding_count")
+  userCount    Int      @default(0) @map("user_count")
+  apiCallCount BigInt   @default(0) @map("api_call_count")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, periodStart])
+  @@index([orgId, periodStart(sort: Desc)])
+  @@map("usage_snapshots")
+}
+
+// M56 — Per-org rate limits
+model OrgRateLimit {
+  id                 String   @id @default(cuid())
+  orgId              String   @unique @map("org_id")
+  requestsPerMinute  Int      @default(100) @map("requests_per_minute")
+  requestsPerHour    Int      @default(3000) @map("requests_per_hour")
+  burstSize          Int      @default(20) @map("burst_size")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("org_rate_limits")
+}
+
+// ──────────────────────────────────────────
+
+model ApiKey {
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  createdById    String    @map("created_by_id")
+  name           String
+  keyHash        String    @map("key_hash")
+  keyPrefix      String    @map("key_prefix")
+  scopes         String[]  @default([])
+  expiresAt      DateTime? @map("expires_at")
+  lastUsedAt     DateTime? @map("last_used_at")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([keyHash])
+  @@map("api_keys")
+}
+
+// ──────────────────────────────────────────
+// Evidence Attachments (M58)
+// ──────────────────────────────────────────
+
+model Evidence {
+  id             String   @id @default(cuid())
+  findingId      String   @map("finding_id")
+  organizationId String   @map("organization_id")
+  uploadedById   String   @map("uploaded_by_id")
+  filename       String
+  originalName   String   @map("original_name")
+  mimeType       String   @map("mime_type")
+  size           Int
+  storagePath    String   @map("storage_path")
+  caption        String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  finding      Finding      @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedBy   User         @relation("EvidenceUploadedBy", fields: [uploadedById], references: [id])
+
+  @@index([findingId])
+  @@index([organizationId])
+  @@map("evidences")
+}
+
+// ──────────────────────────────────────────
+// Risk Acceptance Workflow (M60)
+// ──────────────────────────────────────────
+
+model RiskAcceptance {
+  id             String    @id @default(cuid())
+  findingId      String    @unique @map("finding_id")
+  organizationId String    @map("organization_id")
+  approvedById   String    @map("approved_by_id")
+  decision       String    // ACCEPTED | DEFERRED | FALSE_POSITIVE
+  justification  String    @db.Text
+  expiresAt      DateTime? @map("expires_at")
+  reviewedAt     DateTime  @default(now()) @map("reviewed_at")
+  revokedAt      DateTime? @map("revoked_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  finding      Finding      @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  approvedBy   User         @relation("RiskAcceptanceApprovedBy", fields: [approvedById], references: [id])
+
+  @@index([organizationId])
+  @@index([expiresAt])
+  @@map("risk_acceptances")
+}
+
+// ──────────────────────────────────────────
+// Finding Tags (M63)
+// ──────────────────────────────────────────
+
+model FindingTag {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  color          String   @default("#6366f1") // hex color
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignments  FindingTagAssignment[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("finding_tags")
+}
+
+model FindingTagAssignment {
+  findingId String @map("finding_id")
+  tagId     String @map("tag_id")
+
+  finding Finding    @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  tag     FindingTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([findingId, tagId])
+  @@map("finding_tag_assignments")
+}
+
+// ──────────────────────────────────────────
+// SLA Policy (M64)
+// ──────────────────────────────────────────
+
+model SlaPolicy {
+  id             String @id @default(cuid())
+  organizationId String @unique @map("organization_id")
+
+  criticalDays Int @default(7)   @map("critical_days")
+  highDays     Int @default(30)  @map("high_days")
+  mediumDays   Int @default(90)  @map("medium_days")
+  lowDays      Int @default(180) @map("low_days")
+  infoDays     Int @default(365) @map("info_days")
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("sla_policies")
+}
+
+// ──────────────────────────────────────────
+// Scan Schedules (M66)
+// ──────────────────────────────────────────
+
+model ScanSchedule {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  projectId      String   @map("project_id")
+  targetId       String   @map("target_id")
+  scanType       String   @default("QUICK") @map("scan_type")
+  cronExpr       String   @map("cron_expr")
+  isActive       Boolean  @default(true) @map("is_active")
+  policyId       String?  @map("policy_id")
+  lastRunAt      DateTime? @map("last_run_at")
+  nextRunAt      DateTime? @map("next_run_at")
+  createdById    String   @map("created_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt     @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  target       Target       @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation(fields: [createdById], references: [id])
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([nextRunAt, isActive])
+  @@map("scan_schedules")
+}
+
+// ──────────────────────────────────────────
+// Pentest Methodology Templates (M40)
+// ──────────────────────────────────────────
+
+model Methodology {
+  id             String  @id @default(cuid())
+  organizationId String  @map("organization_id")
+  name           String
+  description    String? @db.Text
+  preset         String  @default("CUSTOM") // OWASP_TG_V42 | PTES | CUSTOM
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt     @map("updated_at")
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  checks       MethodologyCheck[]
+  assignments  MethodologyAssignment[]
+
+  @@index([organizationId])
+  @@map("methodologies")
+}
+
+model MethodologyCheck {
+  id            String  @id @default(cuid())
+  methodologyId String  @map("methodology_id")
+  title         String
+  description   String? @db.Text
+  category      String  @default("General")
+  sortOrder     Int     @default(0) @map("sort_order")
+
+  methodology Methodology             @relation(fields: [methodologyId], references: [id], onDelete: Cascade)
+  progress    MethodologyProgress[]
+
+  @@index([methodologyId])
+  @@map("methodology_checks")
+}
+
+model MethodologyAssignment {
+  id            String @id @default(cuid())
+  methodologyId String @map("methodology_id")
+  projectId     String @map("project_id")
+  organizationId String @map("organization_id")
+
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  methodology Methodology          @relation(fields: [methodologyId], references: [id], onDelete: Cascade)
+  project     Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  progress    MethodologyProgress[]
+
+  @@unique([methodologyId, projectId])
+  @@index([projectId])
+  @@map("methodology_assignments")
+}
+
+model MethodologyProgress {
+  id             String  @id @default(cuid())
+  assignmentId   String  @map("assignment_id")
+  checkId        String  @map("check_id")
+  organizationId String  @map("organization_id")
+  completed      Boolean @default(false)
+  notes          String? @db.Text
+  completedById  String? @map("completed_by_id")
+  completedAt    DateTime? @map("completed_at")
+
+  assignment   MethodologyAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  check        MethodologyCheck      @relation(fields: [checkId], references: [id], onDelete: Cascade)
+  completedBy  User?                 @relation("MethodologyProgressUser", fields: [completedById], references: [id])
+
+  @@unique([assignmentId, checkId])
+  @@index([assignmentId])
+  @@map("methodology_progress")
+}

@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production
+
+# Prisma
+packages/db/generated/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+coverage/
+.nyc_output/
+
+# Docker
+docker-volumes/
+
+# Docker Secrets — never commit actual secret values
+secrets/*.txt
+!secrets/.gitkeep
+
+# Generated / local artifacts
+packages/db/src/generated/
+*.tsbuildinfo
+apps/api/uploads/*
+!apps/api/uploads/.gitkeep
+playwright-report/
+test-results/

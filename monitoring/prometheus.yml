@@ -1,0 +1,20 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: ptaas-api
+    static_configs:
+      - targets: ['api:3001']
+    metrics_path: /api/v1/metrics
+    scheme: http
+    authorization:
+      credentials_file: /run/secrets/metrics_token
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ['postgres-exporter:9187']

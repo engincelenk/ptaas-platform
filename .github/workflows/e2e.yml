@@ -1,0 +1,164 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright E2E (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: ptaas_e2e
+          POSTGRES_USER: ptaas
+          POSTGRES_PASSWORD: ptaas_e2e_pw
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: postgresql://ptaas:ptaas_e2e_pw@localhost:5432/ptaas_e2e
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: e2e-jwt-secret-not-for-production
+      JWT_REFRESH_SECRET: e2e-refresh-secret-not-for-production
+      SMTP_HOST: localhost
+      SMTP_PORT: "1025"
+      APP_URL: http://localhost:3000
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers (Chromium only for CI)
+        run: npx playwright install chromium --with-deps
+        working-directory: apps/web
+
+      - name: Run Prisma migrations
+        run: npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
+
+      - name: Seed E2E test data
+        run: npx ts-node --project tsconfig.base.json scripts/seed-e2e.ts
+        env:
+          E2E_ADMIN_EMAIL: ${{ vars.E2E_USER_EMAIL || 'admin@ptaas.local' }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_USER_PASSWORD || 'Test1234!secure' }}
+        continue-on-error: true   # Seed script is optional — tests skip gracefully
+
+      - name: Build API
+        run: npm run build --workspace=apps/api
+
+      - name: Start API server
+        run: node apps/api/dist/main.js &
+        env:
+          PORT: "3001"
+
+      - name: Build Web
+        run: npm run build --workspace=apps/web
+
+      - name: Start Web server
+        run: npm run start --workspace=apps/web &
+        env:
+          PORT: "3000"
+
+      - name: Wait for servers to be ready
+        run: |
+          npx wait-on http://localhost:3001/api/v1/health http://localhost:3000 --timeout 60000
+
+      - name: Run Playwright tests (shard ${{ matrix.shard }}/3)
+        run: npx playwright test --shard=${{ matrix.shard }}/3 --project=chromium
+        working-directory: apps/web
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+          E2E_USER_EMAIL: ${{ vars.E2E_USER_EMAIL || 'admin@ptaas.local' }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD || 'Test1234!secure' }}
+          CI: "true"
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-shard-${{ matrix.shard }}
+          path: apps/web/playwright-report/
+          retention-days: 14
+
+      - name: Upload test results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-shard-${{ matrix.shard }}
+          path: apps/web/test-results/
+          retention-days: 7
+
+  # Merge sharded reports into one
+  merge-reports:
+    name: Merge Playwright Reports
+    runs-on: ubuntu-latest
+    needs: e2e
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download all shard reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: playwright-report-shard-*
+          path: all-playwright-reports
+          merge-multiple: false
+
+      - name: Merge into single HTML report
+        run: npx playwright merge-reports --reporter html all-playwright-reports/*/
+        working-directory: apps/web
+
+      - name: Upload merged report
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-merged-${{ github.sha }}
+          path: apps/web/playwright-report/
+          retention-days: 30

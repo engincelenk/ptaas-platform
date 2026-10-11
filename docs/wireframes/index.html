@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PTaaS Wireframes — Übersicht</title>
+<style>
+:root {
+  --bg: #ffffff; --bg-2: #f8f8f7; --bg-3: #f0efe8;
+  --text: #1a1a18; --text-2: #5f5e5a; --text-3: #888780;
+  --border: rgba(0,0,0,0.12); --border-2: rgba(0,0,0,0.20);
+  --accent: #e86d30;
+  --danger: #dc2626; --warning: #d97706; --success: #16a34a;
+  --r: 10px; --r-lg: 14px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: var(--bg-3); min-height: 100vh; }
+.header { background: #1a1a18; padding: 40px 48px 36px; }
+.logo { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+.logo-mark { width: 40px; height: 40px; background: var(--accent); border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+.logo-mark svg { width: 22px; height: 22px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; }
+.logo-name { font-size: 22px; font-weight: 800; color: #fff; letter-spacing: -0.02em; }
+.logo-name span { color: var(--accent); }
+.header-meta { font-size: 13px; color: rgba(255,255,255,0.5); display: flex; gap: 20px; flex-wrap: wrap; }
+.header-meta span { display: flex; align-items: center; gap: 6px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+.content { padding: 40px 48px; max-width: 960px; margin: 0 auto; }
+h2 { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+h2::after { content: ''; flex: 1; height: 1px; background: var(--border-2); }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-bottom: 40px; }
+.card { background: var(--bg); border-radius: var(--r-lg); border: 1px solid var(--border); padding: 20px 22px; text-decoration: none; display: block; transition: all 0.15s; }
+.card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 16px rgba(232,109,48,0.15); }
+.card-num { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: 0.08em; margin-bottom: 8px; }
+.card-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.card-desc { font-size: 12px; color: var(--text-2); line-height: 1.5; margin-bottom: 12px; }
+.card-screens { display: flex; flex-wrap: wrap; gap: 4px; }
+.screen-chip { font-size: 10px; color: var(--text-3); background: var(--bg-3); padding: 2px 6px; border-radius: 4px; }
+
+.info-card { background: var(--bg); border-radius: var(--r-lg); border: 1px solid var(--border); padding: 20px 22px; margin-bottom: 40px; }
+.info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.info-item dt { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 4px; }
+.info-item dd { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.badge-accent { background: #fff3ee; color: var(--accent); }
+
+.persona-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 40px; }
+.persona-card { background: var(--bg); border-radius: var(--r); border: 1px solid var(--border); padding: 16px; }
+.persona-icon { font-size: 20px; margin-bottom: 8px; }
+.persona-name { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.persona-desc { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+
+footer { padding: 24px 48px; border-top: 1px solid var(--border); background: var(--bg); }
+footer p { font-size: 12px; color: var(--text-3); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <div class="logo-mark"><svg viewBox="0 0 22 22"><path d="M11 2L2 7v6l9 5 9-5V7z"/><path d="M2 7l9 5 9-5"/></svg></div>
+    <div class="logo-name">PTaaS<span>.</span></div>
+  </div>
+  <div style="font-size:28px;font-weight:800;color:#fff;letter-spacing:-0.02em;margin-bottom:8px">Wireframe-Bibliothek</div>
+  <div style="font-size:14px;color:rgba(255,255,255,0.6);margin-bottom:20px">Interaktive UX-Referenz für die Implementierung</div>
+  <div class="header-meta">
+    <span><div class="dot"></div> 5 Wireframe-Dateien</span>
+    <span><div class="dot"></div> 45+ Screens & States</span>
+    <span><div class="dot"></div> 3 Personas</span>
+    <span><div class="dot"></div> WCAG 2.1 AA</span>
+    <span><div class="dot"></div> Stand: Juni 2026</span>
+  </div>
+</div>
+
+<div class="content">
+
+  <h2>Projektkontext</h2>
+  <div class="info-card">
+    <dl class="info-grid">
+      <div class="info-item">
+        <dt>Tech Stack</dt>
+        <dd>Next.js 15+ · NestJS · TypeScript · TailwindCSS · shadcn/ui · Prisma · PostgreSQL+pgvector</dd>
+      </div>
+      <div class="info-item">
+        <dt>Design-System</dt>
+        <dd>shadcn/ui Components · 4px Spacing Grid · CSS Variables · WCAG 2.1 AA</dd>
+      </div>
+      <div class="info-item">
+        <dt>Monorepo</dt>
+        <dd>apps/web · apps/api · packages/types · packages/db · npm workspaces</dd>
+      </div>
+    </dl>
+  </div>
+
+  <h2>Personas</h2>
+  <div class="persona-row">
+    <div class="persona-card">
+      <div class="persona-icon">🔐</div>
+      <div class="persona-name">Security Engineer</div>
+      <div class="persona-desc">Täglicher User. Geschwindigkeit-fokussiert. Braucht Inline-Status-Change, One-Click-Rescan. Kein Screen-Wechsel für einfache Aktionen.</div>
+    </div>
+    <div class="persona-card">
+      <div class="persona-icon">📊</div>
+      <div class="persona-name">CISO / Manager</div>
+      <div class="persona-desc">Gelegentlicher User. Risiko-Überblick. Braucht 30-Sekunden-AI-Briefing, prominente Risk-Deltas, „Was erfordert meine Entscheidung?".</div>
+    </div>
+    <div class="persona-card">
+      <div class="persona-icon">💻</div>
+      <div class="persona-name">Developer</div>
+      <div class="persona-desc">Empfängt Findings. Kein Security-Hintergrund. Braucht AI-Erklärung zuerst, CVSS/CWE im Accordion, 3-Step-Fix-Guide mit Code.</div>
+    </div>
+  </div>
+
+  <h2>Wireframe-Dateien</h2>
+  <div class="grid">
+    <a href="01-auth-onboarding.html" class="card">
+      <div class="card-num">01 · AUTH & ONBOARDING</div>
+      <div class="card-title">Login, MFA & Workspace-Setup</div>
+      <div class="card-desc">Vollständiger Auth-Flow inkl. Fehler-States und 4-stufiges Onboarding mit DNS-Verifikation.</div>
+      <div class="card-screens">
+        <span class="screen-chip">Login</span>
+        <span class="screen-chip">Login Error</span>
+        <span class="screen-chip">MFA</span>
+        <span class="screen-chip">MFA Error</span>
+        <span class="screen-chip">Forgot PW</span>
+        <span class="screen-chip">Reset PW</span>
+        <span class="screen-chip">Onboarding ×4</span>
+        <span class="screen-chip">Verified</span>
+      </div>
+    </a>
+
+    <a href="02-dashboard-scan.html" class="card">
+      <div class="card-num">02 · DASHBOARD & SCAN</div>
+      <div class="card-title">Security Dashboard & Scan-Management</div>
+      <div class="card-desc">Risiko-Gauge, Trend-Chart, CISO-Ansicht mit AI-Briefing, Critical-Alert mid-scan, Scan-Konfiguration.</div>
+      <div class="card-screens">
+        <span class="screen-chip">Dashboard</span>
+        <span class="screen-chip">CISO View</span>
+        <span class="screen-chip">Empty State</span>
+        <span class="screen-chip">Critical Alert</span>
+        <span class="screen-chip">Notifications</span>
+        <span class="screen-chip">Scan Config</span>
+        <span class="screen-chip">Scan Running</span>
+        <span class="screen-chip">Scan Error</span>
+        <span class="screen-chip">Queue</span>
+      </div>
+    </a>
+
+    <a href="03-findings-detail.html" class="card">
+      <div class="card-num">03 · FINDINGS & DETAIL</div>
+      <div class="card-title">Findings-Verwaltung & Detail-Ansicht</div>
+      <div class="card-desc">Inline-Status-Change, Bulk-Actions, leerer Filter-State, Persona-Toggle (Dev/Eng), Evidence, Timeline, Verification.</div>
+      <div class="card-screens">
+        <span class="screen-chip">Findings List</span>
+        <span class="screen-chip">Bulk Actions</span>
+        <span class="screen-chip">Empty Filter</span>
+        <span class="screen-chip">Detail Dev</span>
+        <span class="screen-chip">Detail Eng</span>
+        <span class="screen-chip">Evidence</span>
+        <span class="screen-chip">Timeline</span>
+        <span class="screen-chip">Verif. Fail</span>
+        <span class="screen-chip">Verif. Partial</span>
+        <span class="screen-chip">Report Config</span>
+      </div>
+    </a>
+
+    <a href="04-loading-states.html" class="card">
+      <div class="card-num">04 · LOADING STATES</div>
+      <div class="card-title">Skeleton Screens & Progress</div>
+      <div class="card-desc">Dashboard/Findings/Detail Skeleton, Scan-Step-Progress, PDF-Ring-Progress, AI-Streaming-Skeleton.</div>
+      <div class="card-screens">
+        <span class="screen-chip">Dashboard Skeleton</span>
+        <span class="screen-chip">Findings Skeleton</span>
+        <span class="screen-chip">Detail Skeleton</span>
+        <span class="screen-chip">Scan Progress</span>
+        <span class="screen-chip">PDF Gen/Ready</span>
+        <span class="screen-chip">AI Stream ×3</span>
+        <span class="screen-chip">Transition Demo</span>
+      </div>
+    </a>
+
+    <a href="05-a11y-notifications.html" class="card">
+      <div class="card-num">05 · A11Y & NOTIFICATIONS</div>
+      <div class="card-title">Accessibility & Notification Flyout</div>
+      <div class="card-desc">Disclosure-Flyout, Keyboard-Navigation, ARIA-Annotations, A11y Checklist (8 ✓, 2 Dev-Notes), Fokus-Reihenfolge.</div>
+      <div class="card-screens">
+        <span class="screen-chip">Flyout Closed/Open</span>
+        <span class="screen-chip">Fokus-States</span>
+        <span class="screen-chip">Table A11y</span>
+        <span class="screen-chip">Persona A11y</span>
+        <span class="screen-chip">Live Region</span>
+        <span class="screen-chip">Checklist</span>
+        <span class="screen-chip">Fokus-Order</span>
+      </div>
+    </a>
+
+    <a href="UX-DECISIONS.md" class="card" style="border-style:dashed">
+      <div class="card-num">DOC · UX-ENTSCHEIDUNGEN</div>
+      <div class="card-title">UX-DECISIONS.md</div>
+      <div class="card-desc">Alle dokumentierten UX-Entscheidungen mit Begründung — Referenz für Implementierung und Code-Reviews.</div>
+      <div class="card-screens">
+        <span class="screen-chip">Persona-Entscheidungen</span>
+        <span class="screen-chip">Navigation</span>
+        <span class="screen-chip">Inline-Patterns</span>
+        <span class="screen-chip">A11y-Regeln</span>
+      </div>
+    </a>
+  </div>
+
+  <h2>Implementierungs-Hinweise</h2>
+  <div class="info-card">
+    <dl style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="info-item">
+        <dt>CSS Variables</dt>
+        <dd>Alle Wireframes nutzen <code style="font-family:monospace;font-size:11px">--bg</code>, <code style="font-family:monospace;font-size:11px">--text</code>, <code style="font-family:monospace;font-size:11px">--accent</code> etc. → 1:1 auf TailwindCSS-Custom-Properties übertragbar.</dd>
+      </div>
+      <div class="info-item">
+        <dt>Skeleton-Shapes</dt>
+        <dd>Skeleton-Shapes spiegeln Content-Shapes exakt. Kein Layout-Shift beim Laden → bessere CLS-Score.</dd>
+      </div>
+      <div class="info-item">
+        <dt>Breakpoints</dt>
+        <dd>Wireframes zeigen Desktop (1280px+). Mobile-Breakpoints: Sidebar → Bottom Nav, Grid → 1 Spalte.</dd>
+      </div>
+      <div class="info-item">
+        <dt>Persona-Persistenz</dt>
+        <dd>Persona-Toggle-Wahl in localStorage speichern → bleibt über Page-Reloads. Default: Developer für neue User.</dd>
+      </div>
+    </dl>
+  </div>
+
+</div>
+
+<footer>
+  <p>PTaaS Wireframe-Bibliothek · Erstellt mit Claude Sonnet · Juni 2026 · <a href="UX-DECISIONS.md" style="color:var(--accent)">UX-Entscheidungen lesen →</a></p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,191 @@
+version: "3.9"
+
+# Docker Secrets — populated from external secret files in production.
+# In development, the `environment:` blocks can still be used via .env.
+# To use secrets in prod: create files under /run/secrets/<name>
+secrets:
+  scanner_api_key:
+    file: ./secrets/scanner_api_key.txt
+  encryption_key:
+    file: ./secrets/encryption_key.txt
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ptaas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ptaas
+      POSTGRES_PASSWORD: ptaas_password
+      POSTGRES_DB: ptaas_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ptaas -d ptaas_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ptaas-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+      - scanner_bridge   # Scanner reads BullMQ jobs from Redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MinIO — SSE-S3 Server-Side Encryption ───────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: ptaas-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ptaas_minio
+      MINIO_ROOT_PASSWORD: ptaas_minio_secret
+      # SSE-S3: single-key server-side encryption.
+      # Key format: "my-key-name:base64-encoded-32-byte-key"
+      # In production, replace with a KMS-backed key (e.g. Vault, AWS KMS).
+      MINIO_KMS_SECRET_KEY: "ptaas-evidence-key:3c9294lXYkj9O+C2pPqY1b0CqZT5fTLQoZKNYGJRWwE="
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── NestJS API ──────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: ptaas-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://ptaas:ptaas_password@postgres:5432/ptaas_db?schema=public
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: minio
+      NODE_ENV: development
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+      - external
+      - scanner_bridge   # Scanner POSTs findings to /internal/* endpoints
+
+  # ── Next.js Frontend ────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: ptaas-web
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - external
+
+  # ── OWASP ZAP — Web Crawl & API Security Scanner (M9) ──────────────────────
+  # ZAP runs in daemon mode; Python worker drives it via REST API on port 8080.
+  # Needs scanner_net for internet access to scan targets.
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: ptaas-zap
+    restart: unless-stopped
+    command: >
+      zap.sh -daemon
+      -host 0.0.0.0 -port 8080
+      -config api.key=${ZAP_API_KEY:-ptaas-zap-key}
+      -config api.addrs.addr.name=.*
+      -config api.addrs.addr.regex=true
+      -config ajaxSpider.browserId=htmlunit
+      -config connection.timeoutInSecs=20
+    networks:
+      - scanner_bridge   # Python worker → ZAP API
+      - scanner_net      # ZAP → scan targets (internet)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/JSON/core/view/version/?apikey=${ZAP_API_KEY:-ptaas-zap-key}"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ── Python Scanner Worker ───────────────────────────────────
+  # Secrets are mounted at /run/secrets/<name> inside the container.
+  # The worker reads them via load_secret() in config.py instead of env vars.
+  scanner:
+    build:
+      context: apps/scanner
+      dockerfile: Dockerfile
+    container_name: ptaas-scanner
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      API_BASE_URL: http://api:3001/api/v1
+      # Dev fallback — in production these env vars are NOT set;
+      # the worker reads from /run/secrets/ instead.
+    env_file: .env
+    secrets:
+      - scanner_api_key
+      - encryption_key
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - scanner_bridge   # Redis (BullMQ) + API internal callbacks
+      - scanner_net      # Internet access for scan targets — ONLY this network has external routing
+    # The scanner has NO access to:
+    #   - postgres (only on `internal` network)
+    #   - minio (only on `internal` network)
+    #   - web (only on `external` network)
+
+networks:
+  internal:
+    driver: bridge
+    internal: true         # No internet — DB, Redis, MinIO, API
+  external:
+    driver: bridge         # Internet — web frontend, public API
+  scanner_bridge:
+    driver: bridge
+    internal: true         # No internet — scanner ↔ Redis ↔ API only
+  scanner_net:
+    driver: bridge
+    internal: false        # Internet — scanner → scan targets only
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

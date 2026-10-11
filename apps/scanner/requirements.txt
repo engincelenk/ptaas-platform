@@ -1,0 +1,19 @@
+# BullMQ Python SDK — same protocol as NestJS producer
+bullmq==2.12.0
+
+# HTTP client for internal API callbacks
+httpx==0.28.1
+
+# Structured logging
+structlog==24.4.0
+
+# DNS recon (M8 — ASM)
+dnspython==2.7.0
+
+# OWASP ZAP Python API client (M9 — Advanced Scanning)
+zaproxy==0.3.6
+
+# AI Scan Strategy (M19)
+langgraph>=0.2.0
+langchain-anthropic>=0.2.0
+langchain-core>=0.2.0

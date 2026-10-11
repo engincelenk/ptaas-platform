@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PTaaS Wireframes — Auth & Onboarding</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-2: #f8f8f7;
+  --bg-3: #f0efe8;
+  --text: #1a1a18;
+  --text-2: #5f5e5a;
+  --text-3: #888780;
+  --border: rgba(0,0,0,0.12);
+  --border-2: rgba(0,0,0,0.20);
+  --accent: #e86d30;
+  --accent-h: #d45f22;
+  --danger: #dc2626;
+  --danger-bg: #fef2f2;
+  --warning: #d97706;
+  --success: #16a34a;
+  --success-bg: #f0fdf4;
+  --info: #2563eb;
+  --r: 8px;
+  --r-lg: 12px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: 'SF Mono', 'Fira Code', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: #e8e7df; min-height: 100vh; }
+
+/* Nav */
+.nav { background: #1a1a18; padding: 0 24px; display: flex; align-items: center; gap: 0; height: 48px; position: sticky; top: 0; z-index: 100; }
+.nav-title { color: #fff; font-weight: 700; font-size: 13px; letter-spacing: 0.05em; margin-right: 32px; }
+.nav-title span { color: var(--accent); }
+.tab { padding: 0 16px; height: 48px; display: flex; align-items: center; color: rgba(255,255,255,0.5); font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: all 0.15s; }
+.tab:hover { color: rgba(255,255,255,0.8); }
+.tab.active { color: #fff; border-bottom-color: var(--accent); }
+.nav-scroll { display: flex; overflow-x: auto; gap: 0; }
+.nav-scroll::-webkit-scrollbar { display: none; }
+
+/* Canvas */
+.canvas { padding: 40px 24px; display: flex; justify-content: center; }
+.screen { display: none; }
+.screen.active { display: block; width: 100%; max-width: 440px; }
+.screen.active.wide { max-width: 900px; }
+
+/* Card */
+.card { background: var(--bg); border-radius: var(--r-lg); border: 1px solid var(--border); padding: 40px; }
+.card-sm { padding: 32px; }
+
+/* Logo */
+.logo { display: flex; align-items: center; gap: 10px; margin-bottom: 32px; }
+.logo-mark { width: 36px; height: 36px; background: var(--accent); border-radius: var(--r); display: flex; align-items: center; justify-content: center; }
+.logo-mark svg { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; }
+.logo-text { font-size: 18px; font-weight: 700; color: var(--text); }
+.logo-text span { color: var(--accent); }
+
+/* Typography */
+h2 { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+h3 { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.subtitle { font-size: 14px; color: var(--text-2); margin-bottom: 28px; line-height: 1.5; }
+
+/* Form */
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 6px; }
+.input { width: 100%; padding: 10px 12px; border: 1.5px solid var(--border-2); border-radius: var(--r); font-size: 14px; color: var(--text); background: var(--bg); outline: none; transition: border-color 0.15s; }
+.input:focus { border-color: var(--accent); }
+.input.error { border-color: var(--danger); background: var(--danger-bg); }
+.input.filled { border-color: var(--border-2); color: var(--text); }
+.input-row { display: flex; gap: 8px; }
+.input-row .input { text-align: center; font-size: 22px; font-weight: 700; letter-spacing: 0.1em; padding: 12px 8px; }
+
+/* Error message */
+.error-msg { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: var(--danger-bg); border: 1px solid #fca5a5; border-radius: var(--r); margin-bottom: 16px; }
+.error-msg svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
+.error-msg span { font-size: 13px; color: #991b1b; line-height: 1.4; }
+
+/* Success message */
+.success-msg { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: var(--success-bg); border: 1px solid #86efac; border-radius: var(--r); margin-bottom: 16px; }
+.success-msg span { font-size: 13px; color: #166534; line-height: 1.4; }
+
+/* Button */
+.btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 11px 16px; border-radius: var(--r); font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-h); }
+.btn-secondary { background: transparent; color: var(--text); border: 1.5px solid var(--border-2); }
+.btn-secondary:hover { border-color: var(--border-2); background: var(--bg-2); }
+.btn-sm { width: auto; padding: 7px 14px; font-size: 13px; }
+
+/* Links */
+.link { color: var(--accent); font-size: 13px; text-decoration: none; cursor: pointer; }
+.link:hover { text-decoration: underline; }
+.row-between { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+
+/* Divider */
+.divider { display: flex; align-items: center; gap: 12px; margin: 20px 0; }
+.divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.divider span { font-size: 12px; color: var(--text-3); }
+
+/* SSO */
+.sso-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 10px; border: 1.5px solid var(--border-2); border-radius: var(--r); background: var(--bg); font-size: 14px; font-weight: 500; color: var(--text); cursor: pointer; margin-bottom: 10px; }
+.sso-btn:hover { background: var(--bg-2); }
+
+/* MFA */
+.mfa-icon { width: 56px; height: 56px; background: #eff6ff; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; }
+.mfa-icon svg { width: 28px; height: 28px; }
+.mfa-hint { font-size: 12px; color: var(--text-3); text-align: center; margin-top: 16px; line-height: 1.5; }
+
+/* Progress steps */
+.steps { display: flex; align-items: center; gap: 0; margin-bottom: 32px; }
+.step-item { display: flex; align-items: center; gap: 0; flex: 1; }
+.step-dot { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.step-dot.done { background: var(--success); color: #fff; }
+.step-dot.active { background: var(--accent); color: #fff; }
+.step-dot.pending { background: var(--bg-3); color: var(--text-3); border: 2px solid var(--border); }
+.step-line { flex: 1; height: 2px; background: var(--border); }
+.step-line.done { background: var(--success); }
+.step-label { font-size: 10px; color: var(--text-3); text-align: center; margin-top: 4px; white-space: nowrap; }
+
+/* Checkbox */
+.checkbox-row { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+.checkbox { width: 16px; height: 16px; border: 2px solid var(--border-2); border-radius: 4px; flex-shrink: 0; margin-top: 2px; display: flex; align-items: center; justify-content: center; }
+.checkbox.checked { background: var(--accent); border-color: var(--accent); }
+.checkbox-label { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+
+/* Badge */
+.badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.badge-danger { background: #fef2f2; color: #991b1b; }
+.badge-warning { background: #fffbeb; color: #92400e; }
+.badge-success { background: #f0fdf4; color: #166534; }
+
+/* Security meter */
+.meter { height: 4px; border-radius: 2px; background: var(--bg-3); margin-top: 6px; overflow: hidden; }
+.meter-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.meter-fill.weak { width: 25%; background: var(--danger); }
+.meter-fill.fair { width: 50%; background: var(--warning); }
+.meter-fill.strong { width: 75%; background: #84cc16; }
+.meter-fill.very-strong { width: 100%; background: var(--success); }
+.meter-label { font-size: 11px; color: var(--text-3); margin-top: 4px; }
+
+/* Code block */
+.code-block { background: #1a1a18; color: #e2e8f0; padding: 14px 16px; border-radius: var(--r); font-family: var(--mono); font-size: 12px; line-height: 1.6; margin: 12px 0; overflow-x: auto; }
+
+/* Annotation */
+.annotation { position: relative; }
+.ann-badge { display: inline-block; background: #fbbf24; color: #1a1a18; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
+.note { font-size: 11px; color: var(--text-3); background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 8px 10px; margin-top: 8px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-title">PTaaS <span>·</span> Auth & Onboarding</div>
+  <div class="nav-scroll">
+    <div class="tab active" onclick="show('login')">Login</div>
+    <div class="tab" onclick="show('login-error')">Login Error</div>
+    <div class="tab" onclick="show('mfa')">MFA</div>
+    <div class="tab" onclick="show('mfa-error')">MFA Error</div>
+    <div class="tab" onclick="show('forgot')">Forgot PW</div>
+    <div class="tab" onclick="show('reset')">Reset PW</div>
+    <div class="tab" onclick="show('ob1')">Onboarding 1</div>
+    <div class="tab" onclick="show('ob2')">Onboarding 2</div>
+    <div class="tab" onclick="show('ob3')">Onboarding 3</div>
+    <div class="tab" onclick="show('ob4')">Onboarding 4</div>
+    <div class="tab" onclick="show('ob-done')">Verified</div>
+  </div>
+</nav>
+
+<div class="canvas">
+
+  <!-- LOGIN -->
+  <div class="screen active" id="screen-login">
+    <div class="card">
+      <div class="logo">
+        <div class="logo-mark"><svg viewBox="0 0 20 20"><path d="M10 2L2 7v6l8 5 8-5V7z"/><path d="M2 7l8 5 8-5"/></svg></div>
+        <div class="logo-text">PTaaS<span>.</span></div>
+      </div>
+      <h2>Willkommen zurück</h2>
+      <p class="subtitle">Melde dich bei deinem Security-Workspace an.</p>
+
+      <div class="sso-btn">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        Mit SSO anmelden
+      </div>
+
+      <div class="divider"><span>oder mit E-Mail</span></div>
+
+      <div class="field">
+        <label>E-Mail</label>
+        <input class="input filled" type="email" value="anna.m@acme-corp.de" readonly>
+      </div>
+      <div class="field">
+        <div class="row-between" style="margin-bottom:6px">
+          <label style="margin:0">Passwort</label>
+          <a class="link" onclick="show('forgot')">Vergessen?</a>
+        </div>
+        <input class="input" type="password" placeholder="••••••••••••">
+      </div>
+
+      <button class="btn btn-primary" style="margin-top:8px">Anmelden</button>
+      <p style="font-size:13px;color:var(--text-3);text-align:center;margin-top:16px">
+        Noch kein Account? <a class="link" href="#">Workspace erstellen</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- LOGIN ERROR -->
+  <div class="screen" id="screen-login-error">
+    <div class="card">
+      <div class="logo">
+        <div class="logo-mark"><svg viewBox="0 0 20 20"><path d="M10 2L2 7v6l8 5 8-5V7z"/><path d="M2 7l8 5 8-5"/></svg></div>
+        <div class="logo-text">PTaaS<span>.</span></div>
+      </div>
+      <h2>Willkommen zurück</h2>
+      <p class="subtitle">Melde dich bei deinem Security-Workspace an.</p>
+
+      <div class="error-msg">
+        <svg viewBox="0 0 20 20" fill="none" stroke="#dc2626" stroke-width="2"><circle cx="10" cy="10" r="8"/><line x1="10" y1="7" x2="10" y2="10"/><circle cx="10" cy="13" r="0.5" fill="#dc2626"/></svg>
+        <span>E-Mail oder Passwort ist falsch. Noch <strong>2 Versuche</strong> bevor der Account gesperrt wird.</span>
+      </div>
+
+      <div class="field">
+        <label>E-Mail</label>
+        <input class="input error filled" type="email" value="anna.m@acme-corp.de" readonly>
+      </div>
+      <div class="field">
+        <div class="row-between" style="margin-bottom:6px">
+          <label style="margin:0">Passwort</label>
+          <a class="link" onclick="show('forgot')">Vergessen?</a>
+        </div>
+        <input class="input error" type="password" placeholder="••••••••••••">
+      </div>
+
+      <button class="btn btn-primary" style="margin-top:8px">Erneut versuchen</button>
+      <p class="note" style="margin-top:16px">UX-Notiz: Fehlermeldung benennt beide Felder bewusst nicht einzeln — verhindert User-Enumeration.</p>
+    </div>
+  </div>
+
+  <!-- MFA -->
+  <div class="screen" id="screen-mfa">
+    <div class="card">
+      <div class="logo">
+        <div class="logo-mark"><svg viewBox="0 0 20 20"><path d="M10 2L2 7v6l8 5 8-5V7z"/><path d="M2 7l8 5 8-5"/></svg></div>
+        <div class="logo-text">PTaaS<span>.</span></div>
+      </div>
+      <div class="mfa-icon">
+        <svg viewBox="0 0 28 28" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round"><rect x="4" y="12" width="20" height="14" rx="2"/><path d="M8 12V8a6 6 0 0112 0v4"/><circle cx="14" cy="19" r="2" fill="#2563eb" stroke="none"/></svg>
+      </div>
+      <h2 style="text-align:center">2-Faktor-Verifizierung</h2>
+      <p class="subtitle" style="text-align:center">Code aus deiner Authenticator-App eingeben.</p>
+
+      <div class="field">
+        <label style="text-align:center;display:block">6-stelliger Code</label>
+        <div class="input-row">
+          <input class="input filled" value="3" maxlength="1">
+          <input class="input filled" value="8" maxlength="1">
+          <input class="input filled" value="1" maxlength="1">
+          <input class="input" placeholder="·" maxlength="1">
+          <input class="input" placeholder="·" maxlength="1">
+          <input class="input" placeholder="·" maxlength="1">
+        </div>
+      </div>
+
+      <button class="btn btn-primary" style="margin-top:16px">Verifizieren</button>
+      <p class="mfa-hint">Kein Code? <a class="link" href="#">Recovery Code verwenden</a> oder wende dich an deinen Administrator.</p>
+    </div>
+  </div>
+
+  <!-- MFA ERROR -->
+  <div class="screen" id="screen-mfa-error">
+    <div class="card">
+      <div class="logo">
+        <div class="logo-mark"><svg viewBox="0 0 20 20"><path d="M10 2L2 7v6l8 5 8-5V7z"/><path d="M2 7l8 5 8-5"/></svg></div>
+        <div class="logo-text">PTaaS<span>.</span></div>
+      </div>
+      <div class="mfa-icon" style="background:#fef2f2;">
+        <svg viewBox="0 0 28 28" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round"><rect x="4" y="12" width="20" height="14" rx="2"/><path d="M8 12V8a6 6 0 0112 0v4"/><line x1="11" y1="18" x2="17" y2="22"/><line x1="17" y1="18" x2="11" y2="22"/></svg>
+      </div>
+
+      <div class="error-msg">
+        <svg viewBox="0 0 20 20" fill="none" stroke="#dc2626" stroke-width="2"><circle cx="10" cy="10" r="8"/><line x1="10" y1="7" x2="10" y2="10"/><circle cx="10" cy="13" r="0.5" fill="#dc2626"/></svg>
+        <span>Ungültiger Code. Bitte prüfe deine Authenticator-App und versuche es erneut.</span>
+      </div>
+
+      <div class="field">
+        <label style="text-align:center;display:block">6-stelliger Code</label>
+        <div class="input-row">
+          <input class="input error filled" value="9" maxlength="1">
+          <input class="input error filled" value="9" maxlength="1">
+          <input class="input error filled" value="9" maxlength="1">
+          <input class="input error filled" value="9" maxlength="1">
+          <input class="input error filled" value="9" maxlength="1">
+          <input class="input error filled" value="9" maxlength="1">
+        </div>
+      </div>
+
+      <button class="btn btn-primary" style="margin-top:16px">Erneut versuchen</button>
+      <p class="mfa-hint">Code läuft alle 30 Sekunden ab. Prüfe die Uhrzeit deines Geräts.</p>
+    </div>
+  </div>
+
+  <!-- FORGOT PASSWORD -->
+  <div class="screen" id="screen-forgot">
+    <div class="card">
+      <div class="logo">
+        <div class="logo-mark"><svg viewBox="0 0 20 20"><path d="M10 2L2 7v6l8 5 8-5V7z"/><path d="M2 7l8 5 8-5"/></svg></div>
+        <div class="logo-text">PTaaS<span>.</span></div>
+      </div>
+      <h2>Passwort zurücksetzen</h2>
+      <p class="subtitle">Wir senden dir einen Link, mit dem du ein neues Passwort festlegen kannst.</p>
+
+      <div class="field">
+        <label>E-Mail-Adresse</label>
+        <input class="input" type="email" placeholder="du@unternehmen.de">
+      </div>
+
+      <button class="btn btn-primary">Link senden</button>
+      <div style="text-align:center;margin-top:16px">
+        <a class="link" onclick="show('login')">← Zurück zum Login</a>
+      </div>
+      <p class="note" style="margin-top:16px">UX-Notiz: Gleiche Erfolgsmeldung ob E-Mail existiert oder nicht — verhindert User-Enumeration.</p>
+    </div>
+  </div>
+
+  <!-- RESET PASSWORD -->
+  <div class="screen" id="screen-reset">
+    <div class="card">
+      <div class="logo">
+        <div class="logo-mark"><svg viewBox="0 0 20 20"><path d="M10 2L2 7v6l8 5 8-5V7z"/><path d="M2 7l8 5 8-5"/></svg></div>
+        <div class="logo-text">PTaaS<span>.</span></div>
+      </div>
+
+      <div class="success-msg">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="4 11 8 15 16 7"/></svg>
+        <span>Link gesendet. Prüfe dein E-Mail-Postfach — der Link ist 15 Minuten gültig.</span>
+      </div>
+
+      <h2>Neues Passwort</h2>
+      <p class="subtitle">Wähle ein sicheres Passwort für deinen Account.</p>
+
+      <div class="field">
+        <label>Neues Passwort</label>
+        <input class="input filled" type="password" value="••••••••••••••">
+        <div class="meter"><div class="meter-fill strong"></div></div>
+        <div class="meter-label">Stärke: Gut — füge Sonderzeichen hinzu für sehr stark</div>
+      </div>
+      <div class="field">
+        <label>Passwort bestätigen</label>
+        <input class="input" type="password" placeholder="••••••••••••••">
+      </div>
+
+      <button class="btn btn-primary" style="margin-top:8px">Passwort speichern</button>
+    </div>
+  </div>
+
+  <!-- ONBOARDING 1 -->
+  <div class="screen" id="screen-ob1">
+    <div class="card card-sm">
+      <div class="steps" style="margin-bottom:8px">
+        <div class="step-item">
+          <div class="step-dot active">1</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-item">
+          <div class="step-dot pending">2</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-item">
+          <div class="step-dot pending">3</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-item" style="flex:0">
+          <div class="step-dot pending">4</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:28px">
+        <span style="font-size:11px;color:var(--text-3)">Workspace</span>
+        <span style="font-size:11px;color:var(--text-3)">Ziel</span>
+        <span style="font-size:11px;color:var(--text-3)">Erster Scan</span>
+        <span style="font-size:11px;color:var(--text-3)">Team</span>
+      </div>
+
+      <h2>Workspace einrichten</h2>
+      <p class="subtitle">Wie soll dein Workspace heißen?</p>
+
+      <div class="field">
+        <label>Workspace-Name</label>
+        <input class="input filled" value="ACME Security">
+        <p style="font-size:11px;color:var(--text-3);margin-top:4px">URL: ptaas.io/ws/acme-security</p>
+      </div>
+      <div class="field">
+        <label>Unternehmensgröße</label>
+        <select class="input">
+          <option>1–10 Mitarbeiter</option>
+          <option selected>11–100 Mitarbeiter</option>
+          <option>101–500 Mitarbeiter</option>
+          <option>500+ Mitarbeiter</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Branche</label>
+        <select class="input">
+          <option>SaaS / Software</option>
+          <option selected>Finanzdienstleistungen</option>
+          <option>E-Commerce</option>
+          <option>Gesundheitswesen</option>
+          <option>Andere</option>
+        </select>
+      </div>
+
+      <button class="btn btn-primary">Weiter →</button>
+    </div>
+  </div>
+
+  <!-- ONBOARDING 2 -->
+  <div class="screen" id="screen-ob2">
+    <div class="card card-sm">
+      <div class="steps" style="margin-bottom:8px">
+        <div class="step-item">
+          <div class="step-dot done">✓</div>
+          <div class="step-line done"></div>
+        </div>
+        <div class="step-item">
+          <div class="step-dot active">2</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-item">
+          <div class="step-dot pending">3</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-item" style="flex:0">
+          <div class="step-dot pending">4</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:28px">
+        <span style="font-size:11px;color:var(--success)">Workspace ✓</span>
+        <span style="font-size:11px;color:var(--accent)">Ziel</span>
+        <span style="font-size:11px;color:var(--text-3)">Erster Scan</span>
+        <span style="font-size:11px;color:var(--text-3)">Team</span>
+      </div>
+
+      <h2>Was soll gescannt werden?</h2>
+      <p class="subtitle">Gib deine primäre Domain oder IP-Range an.</p>
+
+      <div class="field">
+        <label>Domain / IP / CIDR</label>
+        <input class="input filled" value="api.acme-corp.de">
+      </div>
+      <div class="field" style="margin-top:-4px">
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <div style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;color:var(--text-3)">api.acme-corp.de</div>
+          <div style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-size:12px;color:var(--text-3)">staging.acme-corp.de</div>
+        </div>
+        <p style="font-size:11px;color:var(--text-3);margin-top:6px">+ Weitere Targets nach dem Onboarding hinzufügbar</p>
+      </div>
+
+      <div style="background:var(--bg-2);border-radius:var(--r);padding:12px;margin:16px 0;border:1px solid var(--border)">
+        <p style="font-size:12px;color:var(--text-2);line-height:1.5;"><strong>Eigentumsnachweis erforderlich:</strong> Im nächsten Schritt verifizieren wir, dass du berechtigt bist, dieses Target zu scannen.</p>
+      </div>
+
+      <button class="btn btn-primary">Weiter →</button>
+    </div>
+  </div>
+
+  <!-- ONBOARDING 3 — DNS VERIFICATION -->
+  <div class="screen" id="screen-ob3">
+    <div class="card card-sm">
+      <div class="steps" style="margin-bottom:8px">
+        <div class="step-item">
+          <div class="step-dot done">✓</div>
+          <div class="step-line done"></div>
+        </div>
+        <div class="step-item">
+          <div class="step-dot done">✓</div>
+          <div class="step-line done"></div>
+        </div>
+        <div class="step-item">
+          <div class="step-dot active">3</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-item" style="flex:0">
+          <div class="step-dot pending">4</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:28px">
+        <span style="font-size:11px;color:var(--success)">Workspace ✓</span>
+        <span style="font-size:11px;color:var(--success)">Ziel ✓</span>
+        <span style="font-size:11px;color:var(--accent)">Erster Scan</span>
+        <span style="font-size:11px;color:var(--text-3)">Team</span>
+      </div>
+
+      <h2>Domain verifizieren</h2>
+      <p class="subtitle">Füge diesen TXT-Eintrag in deinem DNS hinzu und klicke Verifizieren.</p>
+
+      <div class="field">
+        <label>DNS TXT-Eintrag</label>
+        <div class="code-block">_ptaas-verify.api.acme-corp.de
+<span style="color:#86efac">TXT</span> "ptaas-verify=a8f3b2c1d4e5f6a7b8c9d0e1"</div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <div style="flex:1;padding:10px 12px;background:var(--bg-2);border-radius:var(--r);border:1px solid var(--border)">
+          <p style="font-size:11px;color:var(--text-3);margin-bottom:2px">CLOUDFLARE</p>
+          <p style="font-size:12px;color:var(--text-2)">DNS → Add Record → TXT</p>
+        </div>
+        <div style="flex:1;padding:10px 12px;background:var(--bg-2);border-radius:var(--r);border:1px solid var(--border)">
+          <p style="font-size:11px;color:var(--text-3);margin-bottom:2px">ROUTE 53</p>
+          <p style="font-size:12px;color:var(--text-2)">Hosted Zone → Create Record</p>
+        </div>
+      </div>
+
+      <p class="note">DNS-Propagation kann bis zu 5 Minuten dauern. Alternativ: HTTP-File-Verifikation unter <strong>Andere Methode</strong>.</p>
+
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-secondary btn-sm">Andere Methode</button>
+        <button class="btn btn-primary" style="flex:1">Verifizieren</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ONBOARDING 4 — TEAM INVITE -->
+  <div class="screen" id="screen-ob4">
+    <div class="card card-sm">
+      <div class="steps" style="margin-bottom:8px">
+        <div class="step-item">
+          <div class="step-dot done">✓</div>
+          <div class="step-line done"></div>
+        </div>
+        <div class="step-item">
+          <div class="step-dot done">✓</div>
+          <div class="step-line done"></div>
+        </div>
+        <div class="step-item">
+          <div class="step-dot done">✓</div>
+          <div class="step-line done"></div>
+        </div>
+        <div class="step-item" style="flex:0">
+          <div class="step-dot active">4</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:28px">
+        <span style="font-size:11px;color:var(--success)">Workspace ✓</span>
+        <span style="font-size:11px;color:var(--success)">Ziel ✓</span>
+        <span style="font-size:11px;color:var(--success)">Scan ✓</span>
+        <span style="font-size:11px;color:var(--accent)">Team</span>
+      </div>
+
+      <h2>Team einladen</h2>
+      <p class="subtitle">Lade Kollegen ein, die Findings sehen und bearbeiten sollen. Optional.</p>
+
+      <div class="field">
+        <label>E-Mail-Adressen</label>
+        <input class="input" type="email" placeholder="kollege@unternehmen.de">
+      </div>
+
+      <div style="margin-bottom:16px">
+        <p style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:8px">ROLLEN</p>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="checkbox-row">
+            <div class="checkbox checked"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="2"><polyline points="2 5 4 7 8 3"/></svg></div>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text)">Security Engineer</div>
+              <div class="checkbox-label">Vollzugriff auf Scans, Findings, Reports</div>
+            </div>
+          </div>
+          <div class="checkbox-row">
+            <div class="checkbox"></div>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text)">CISO / Manager</div>
+              <div class="checkbox-label">Dashboards, Reports, Risikometriken</div>
+            </div>
+          </div>
+          <div class="checkbox-row">
+            <div class="checkbox"></div>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text)">Developer</div>
+              <div class="checkbox-label">Nur eigene Findings (gefiltert nach Team/Repo)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary">Einladung senden & fertigstellen</button>
+      <div style="text-align:center;margin-top:12px">
+        <a class="link" onclick="show('ob-done')">Überspringen, ich lade später ein</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ONBOARDING DONE -->
+  <div class="screen" id="screen-ob-done">
+    <div class="card card-sm" style="text-align:center">
+      <div style="width:72px;height:72px;background:var(--success-bg);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 24px;">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round"><polyline points="8 19 14 25 28 11"/></svg>
+      </div>
+      <h2>Du bist startklar!</h2>
+      <p class="subtitle">Domain verifiziert · Erster Scan läuft im Hintergrund<br>Ergebnisse erwarten dich in ~5 Minuten.</p>
+
+      <div style="background:var(--bg-2);border-radius:var(--r);padding:16px;margin:20px 0;text-align:left;border:1px solid var(--border)">
+        <div style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:10px">ERSTER SCAN GESTARTET</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <div style="width:8px;height:8px;border-radius:50%;background:var(--success);animation:pulse 2s infinite"></div>
+          <span style="font-size:13px;color:var(--text)">api.acme-corp.de</span>
+          <span style="font-size:11px;color:var(--text-3);margin-left:auto">Ports &amp; Services...</span>
+        </div>
+        <div style="height:4px;background:var(--bg-3);border-radius:2px;overflow:hidden">
+          <div style="width:35%;height:100%;background:var(--accent);border-radius:2px"></div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" onclick="void(0)">Zum Dashboard →</button>
+      <style>@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }</style>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const screen = document.getElementById('screen-' + id);
+  if (screen) screen.classList.add('active');
+  const tabs = document.querySelectorAll('.tab');
+  const tabMap = {
+    'login': 0, 'login-error': 1, 'mfa': 2, 'mfa-error': 3,
+    'forgot': 4, 'reset': 5, 'ob1': 6, 'ob2': 7, 'ob3': 8, 'ob4': 9, 'ob-done': 10
+  };
+  if (tabMap[id] !== undefined) tabs[tabMap[id]].classList.add('active');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,202 @@
+version: "3.9"
+
+# PTaaS Production Compose Overlay
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Prerequisites:
+#   1. Copy .env.production.example → .env and fill all values
+#   2. Create secret files under ./secrets/ (see .env.production.example)
+#   3. Place TLS cert/key at paths set in NGINX_SSL_CERT / NGINX_SSL_KEY
+#   4. Set CLOUDFLARE_TUNNEL_TOKEN from Cloudflare Zero Trust dashboard
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  aes_key:
+    file: ./secrets/aes_key.txt
+  scanner_api_key:
+    file: ./secrets/scanner_api_key.txt
+  encryption_key:
+    file: ./secrets/encryption_key.txt
+  minio_root_password:
+    file: ./secrets/minio_root_password.txt
+  anthropic_api_key:
+    file: ./secrets/anthropic_api_key.txt
+
+services:
+  # ── PostgreSQL (hardened) ──────────────────────────────────────
+  postgres:
+    environment:
+      POSTGRES_USER: ptaas
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_DB: ptaas_db
+    secrets:
+      - db_password
+    ports: []
+    security_opt:
+      - no-new-privileges:true
+
+  # ── Redis (password-protected, persistent) ─────────────────────
+  redis:
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    ports: []
+    security_opt:
+      - no-new-privileges:true
+
+  # ── MinIO (hardened) ─────────────────────────────────────────────
+  minio:
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY}
+      MINIO_BROWSER: "off"
+    secrets:
+      - minio_root_password
+    ports: []
+    security_opt:
+      - no-new-privileges:true
+
+  # ── NestJS API ───────────────────────────────────────────────────
+  api:
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      LOG_LEVEL: info
+    secrets:
+      - db_password
+      - jwt_secret
+      - aes_key
+      - anthropic_api_key
+    ports: []
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ── Next.js Frontend ─────────────────────────────────────────────
+  web:
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL}
+    ports: []
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+
+  # ── Nginx Reverse Proxy ─────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ptaas-nginx
+    restart: unless-stopped
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ${NGINX_SSL_CERT:-/dev/null}:/etc/nginx/ssl/cert.pem:ro
+      - ${NGINX_SSL_KEY:-/dev/null}:/etc/nginx/ssl/key.pem:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+    networks:
+      - external
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Cloudflare Tunnel ──────────────────────────────────────────
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: ptaas-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - external
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      nginx:
+        condition: service_healthy
+
+  # ── Scanner (production) ─────────────────────────────────────────
+  scanner:
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      API_BASE_URL: http://api:3001/api/v1
+    secrets:
+      - scanner_api_key
+      - encryption_key
+      - anthropic_api_key
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 2G
+
+  # ── ZAP (production) ─────────────────────────────────────────────
+  zap:
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # ── PostgreSQL Backup (daily pg_dump → MinIO) ──────────────────
+  db-backup:
+    image: postgres:16-alpine
+    container_name: ptaas-db-backup
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGUSER: ptaas
+      PGDATABASE: ptaas_db
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 2 * * *}
+    secrets:
+      - db_password
+      - minio_root_password
+    volumes:
+      - ./infra/backup/backup.sh:/backup.sh:ro
+      - ./infra/backup/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true

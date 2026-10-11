@@ -1,0 +1,63 @@
+name: Deploy to IONOS VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # Never cancel a deploy mid-flight
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run CI first
+        uses: ./.github/workflows/ci.yml
+        # Ensure tests pass before deploying
+        # (CI workflow is reusable — if not, add the test steps inline)
+
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/ptaas
+
+            echo "=== Pulling latest code ==="
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "=== Building and starting services ==="
+            docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.prod.yml \
+              up -d --build --remove-orphans
+
+            echo "=== Waiting for API health ==="
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost/api/v1/health > /dev/null; then
+                echo "Health check passed after ${i}s"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "Health check failed after 30 attempts"
+                exit 1
+              fi
+              sleep 1
+            done
+
+            echo "=== Cleaning up old Docker images ==="
+            docker image prune -f --filter "until=24h"
+
+            echo "=== Deploy complete ==="

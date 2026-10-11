@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PTaaS Wireframes — Dashboard & Scan</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-2: #f8f8f7;
+  --bg-3: #f0efe8;
+  --text: #1a1a18;
+  --text-2: #5f5e5a;
+  --text-3: #888780;
+  --border: rgba(0,0,0,0.12);
+  --border-2: rgba(0,0,0,0.20);
+  --accent: #e86d30;
+  --accent-h: #d45f22;
+  --danger: #dc2626;
+  --danger-bg: #fef2f2;
+  --warning: #d97706;
+  --warning-bg: #fffbeb;
+  --success: #16a34a;
+  --success-bg: #f0fdf4;
+  --info: #2563eb;
+  --info-bg: #eff6ff;
+  --purple: #7c3aed;
+  --purple-bg: #f5f3ff;
+  --r: 8px;
+  --r-lg: 12px;
+  --sidebar: 220px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: 'SF Mono', 'Fira Code', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: var(--bg-3); }
+
+/* Nav */
+.topnav { background: #1a1a18; padding: 0 24px; display: flex; align-items: center; gap: 0; height: 44px; position: sticky; top: 0; z-index: 200; }
+.topnav-title { color: #fff; font-weight: 700; font-size: 13px; letter-spacing: 0.05em; margin-right: 32px; }
+.topnav-title span { color: var(--accent); }
+.tab { padding: 0 14px; height: 44px; display: flex; align-items: center; color: rgba(255,255,255,0.5); font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: all 0.15s; }
+.tab:hover { color: rgba(255,255,255,0.8); }
+.tab.active { color: #fff; border-bottom-color: var(--accent); }
+.tab-scroll { display: flex; overflow-x: auto; }
+.tab-scroll::-webkit-scrollbar { display: none; }
+
+/* App shell */
+.shell { display: flex; height: calc(100vh - 44px); }
+
+/* Sidebar */
+.sidebar { width: var(--sidebar); background: var(--bg); border-right: 1px solid var(--border); padding: 16px 0; display: flex; flex-direction: column; flex-shrink: 0; }
+.ws-header { padding: 0 16px 16px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.ws-name { font-size: 13px; font-weight: 700; color: var(--text); }
+.ws-plan { font-size: 11px; color: var(--text-3); }
+.nav-section { padding: 0 8px; margin-bottom: 16px; }
+.nav-label { font-size: 10px; font-weight: 700; color: var(--text-3); letter-spacing: 0.08em; text-transform: uppercase; padding: 0 8px; margin-bottom: 4px; }
+.nav-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: var(--r); font-size: 13px; color: var(--text-2); cursor: pointer; transition: all 0.12s; }
+.nav-item:hover { background: var(--bg-2); color: var(--text); }
+.nav-item.active { background: #fff3ee; color: var(--accent); font-weight: 600; }
+.nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+.nav-badge { margin-left: auto; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 999px; }
+.sidebar-footer { margin-top: auto; padding: 12px 16px; border-top: 1px solid var(--border); }
+.avatar-row { display: flex; align-items: center; gap: 8px; }
+.avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.avatar-name { font-size: 12px; color: var(--text-2); }
+
+/* Main */
+.main { flex: 1; overflow-y: auto; }
+.page { padding: 28px 32px; display: none; }
+.page.active { display: block; }
+
+/* Page header */
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
+.page-title { font-size: 20px; font-weight: 700; color: var(--text); }
+.page-subtitle { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+
+/* Button */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--r); font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-h); }
+.btn-secondary { background: transparent; color: var(--text); border: 1.5px solid var(--border-2); }
+.btn-secondary:hover { background: var(--bg-2); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+
+/* Action banner */
+.banner { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: var(--r); margin-bottom: 20px; border: 1px solid; }
+.banner-info { background: var(--info-bg); border-color: #bfdbfe; }
+.banner-warning { background: var(--warning-bg); border-color: #fde68a; }
+.banner-danger { background: var(--danger-bg); border-color: #fca5a5; }
+.banner-icon { width: 18px; height: 18px; flex-shrink: 0; }
+.banner-text { flex: 1; font-size: 13px; line-height: 1.4; }
+.banner-action { white-space: nowrap; }
+
+/* Cards grid */
+.grid { display: grid; gap: 16px; margin-bottom: 24px; }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-2 { grid-template-columns: 1fr 1fr; }
+
+/* Metric card */
+.metric-card { background: var(--bg); border-radius: var(--r-lg); border: 1px solid var(--border); padding: 20px; }
+.metric-label { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 8px; }
+.metric-value { font-size: 32px; font-weight: 800; color: var(--text); line-height: 1; }
+.metric-value.danger { color: var(--danger); }
+.metric-value.warning { color: var(--warning); }
+.metric-value.success { color: var(--success); }
+.metric-delta { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; margin-top: 6px; padding: 2px 6px; border-radius: 4px; }
+.delta-up { background: var(--danger-bg); color: var(--danger); }
+.delta-down { background: var(--success-bg); color: var(--success); }
+.delta-neutral { background: var(--bg-2); color: var(--text-3); }
+
+/* Risk gauge */
+.gauge-card { background: var(--bg); border-radius: var(--r-lg); border: 1px solid var(--border); padding: 24px; text-align: center; }
+.gauge-svg { width: 160px; height: 90px; }
+
+/* Chart placeholder */
+.chart-bar { display: flex; align-items: flex-end; gap: 6px; height: 80px; }
+.bar { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; opacity: 0.7; }
+.bar.danger { background: var(--danger); opacity: 1; }
+.chart-labels { display: flex; gap: 6px; margin-top: 4px; }
+.chart-labels span { flex: 1; font-size: 9px; color: var(--text-3); text-align: center; }
+
+/* Table */
+.table { width: 100%; border-collapse: collapse; }
+.table th { font-size: 11px; font-weight: 600; color: var(--text-3); text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); letter-spacing: 0.04em; text-transform: uppercase; }
+.table td { font-size: 13px; color: var(--text-2); padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: none; }
+.table tr:hover td { background: var(--bg-2); }
+
+/* Badge */
+.badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.badge-critical { background: #fef2f2; color: #991b1b; }
+.badge-high { background: #fff7ed; color: #c2410c; }
+.badge-medium { background: #fffbeb; color: #92400e; }
+.badge-low { background: #f0fdf4; color: #166534; }
+.badge-info { background: var(--info-bg); color: #1d4ed8; }
+.badge-neutral { background: var(--bg-3); color: var(--text-2); }
+
+/* Section card */
+.section-card { background: var(--bg); border-radius: var(--r-lg); border: 1px solid var(--border); padding: 20px; margin-bottom: 20px; }
+.section-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
+
+/* AI Brief */
+.ai-brief { background: linear-gradient(135deg, var(--purple-bg), #ede9fe); border: 1px solid #c4b5fd; border-radius: var(--r-lg); padding: 20px; margin-bottom: 20px; }
+.ai-label { font-size: 10px; font-weight: 700; color: var(--purple); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.ai-brief p { font-size: 13px; color: #3b0764; line-height: 1.6; }
+
+/* Progress bar */
+.prog { height: 6px; background: var(--bg-3); border-radius: 3px; overflow: hidden; }
+.prog-fill { height: 100%; border-radius: 3px; }
+
+/* Status dot */
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dot-success { background: var(--success); }
+.dot-warning { background: var(--warning); animation: pulse 2s infinite; }
+.dot-danger { background: var(--danger); }
+.dot-neutral { background: var(--text-3); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* Scan step */
+.scan-step { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.scan-step:last-child { border-bottom: none; }
+.step-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.step-icon.done { background: var(--success-bg); }
+.step-icon.running { background: var(--warning-bg); }
+.step-icon.pending { background: var(--bg-3); }
+.step-icon svg { width: 16px; height: 16px; }
+
+.note { font-size: 11px; color: var(--text-3); background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 8px 10px; margin-top: 12px; line-height: 1.5; }
+
+/* Notification item */
+.notif { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: var(--r); margin-bottom: 8px; border: 1px solid var(--border); background: var(--bg); }
+.notif.unread { background: var(--info-bg); border-color: #bfdbfe; }
+.notif-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--info); margin-top: 4px; flex-shrink: 0; }
+.notif-text { flex: 1; font-size: 13px; color: var(--text); line-height: 1.5; }
+.notif-time { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+
+/* Form */
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 6px; }
+.input { width: 100%; padding: 9px 12px; border: 1.5px solid var(--border-2); border-radius: var(--r); font-size: 13px; color: var(--text); background: var(--bg); outline: none; }
+.input:focus { border-color: var(--accent); }
+select.input { cursor: pointer; }
+
+/* Toggle */
+.toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.toggle-row:last-child { border-bottom: none; }
+.toggle-info { font-size: 13px; color: var(--text); }
+.toggle-desc { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+.toggle { width: 36px; height: 20px; border-radius: 10px; position: relative; cursor: pointer; flex-shrink: 0; }
+.toggle.on { background: var(--accent); }
+.toggle.off { background: var(--bg-3); border: 1.5px solid var(--border-2); }
+.toggle-thumb { width: 14px; height: 14px; border-radius: 50%; background: #fff; position: absolute; top: 3px; transition: left 0.15s; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+.toggle.on .toggle-thumb { left: 19px; }
+.toggle.off .toggle-thumb { left: 3px; }
+
+/* Queue item */
+.queue-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--bg-2); border-radius: var(--r); margin-bottom: 8px; }
+.queue-pos { font-size: 20px; font-weight: 800; color: var(--text-3); width: 28px; text-align: center; }
+.queue-info { flex: 1; }
+.queue-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.queue-eta { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="topnav-title">PTaaS <span>·</span> Dashboard & Scan</div>
+  <div class="tab-scroll">
+    <div class="tab active" onclick="show('dash')">Dashboard</div>
+    <div class="tab" onclick="show('dash-ciso')">Dashboard CISO</div>
+    <div class="tab" onclick="show('dash-empty')">Dashboard Leer</div>
+    <div class="tab" onclick="show('dash-critical')">Critical Alert (mid-scan)</div>
+    <div class="tab" onclick="show('notifications')">Notifications</div>
+    <div class="tab" onclick="show('scan-config')">Scan Config</div>
+    <div class="tab" onclick="show('scan-running')">Scan Running</div>
+    <div class="tab" onclick="show('scan-error')">Scan Error</div>
+    <div class="tab" onclick="show('scan-queue')">Scan Queue</div>
+  </div>
+</nav>
+
+<div class="shell">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="ws-header">
+      <div class="ws-name">ACME Security</div>
+      <div class="ws-plan">Pro Plan · 3 Targets</div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-label">Workspace</div>
+      <div class="nav-item active">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="2"/><path d="M5 7h6M5 10h4"/></svg>
+        Dashboard
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>
+        Scans
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M3 8h10M3 12h6"/></svg>
+        Findings
+        <div class="nav-badge">12</div>
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2h8l2 2v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3z"/><path d="M8 6v4M6 8h4"/></svg>
+        Reports
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 10l2-6 4 4 2-3 4 5"/></svg>
+        Targets
+      </div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-label">Admin</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="3"/><path d="M1 14s1-4 5-4 5 4 5 4"/><path d="M11 7l4 4M13 7l2 2"/></svg>
+        Team
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2"/></svg>
+        Einstellungen
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <div class="avatar-row">
+        <div class="avatar">AM</div>
+        <div class="avatar-name">Anna M.</div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+
+    <!-- DASHBOARD DEFAULT -->
+    <div class="page active" id="page-dash">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Security Dashboard</div>
+          <div class="page-subtitle">Letzte Aktualisierung: vor 3 Min. · api.acme-corp.de</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary btn-sm">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 8a7 7 0 0014 0"/><path d="M15 5l-1 3-3-1"/></svg>
+            Rescan
+          </button>
+          <button class="btn btn-primary btn-sm">+ Neuer Scan</button>
+        </div>
+      </div>
+
+      <div class="banner banner-warning">
+        <svg class="banner-icon" viewBox="0 0 18 18" fill="none" stroke="#d97706" stroke-width="2"><path d="M9 2L1 16h16z"/><line x1="9" y1="8" x2="9" y2="11"/><circle cx="9" cy="13.5" r="0.5" fill="#d97706"/></svg>
+        <div class="banner-text"><strong>3 Critical Findings</strong> erfordern deine Entscheidung — 2 davon älter als 48h ohne Owner.</div>
+        <button class="btn btn-secondary btn-sm banner-action">Jetzt ansehen</button>
+      </div>
+
+      <!-- Metrics -->
+      <div class="grid grid-3">
+        <div class="metric-card">
+          <div class="metric-label">Critical Findings</div>
+          <div class="metric-value danger">3</div>
+          <div class="metric-delta delta-up">▲ +2 diese Woche</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">High Findings</div>
+          <div class="metric-value warning">9</div>
+          <div class="metric-delta delta-down">▼ −4 vs. letzte Woche</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Ø Fix-Zeit (Critical)</div>
+          <div class="metric-value">4.2d</div>
+          <div class="metric-delta delta-neutral">→ SLA: 7 Tage</div>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <!-- Gauge -->
+        <div class="gauge-card">
+          <div class="metric-label">Risiko-Score</div>
+          <svg class="gauge-svg" viewBox="0 0 160 90">
+            <path d="M20 80 A60 60 0 0 1 140 80" fill="none" stroke="#f0efe8" stroke-width="14" stroke-linecap="round"/>
+            <path d="M20 80 A60 60 0 0 1 140 80" fill="none" stroke="url(#g)" stroke-width="14" stroke-linecap="round" stroke-dasharray="188 188" stroke-dashoffset="75"/>
+            <defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#16a34a"/><stop offset="50%" stop-color="#d97706"/><stop offset="100%" stop-color="#dc2626"/></linearGradient></defs>
+            <text x="80" y="76" text-anchor="middle" font-size="28" font-weight="800" fill="#1a1a18">68</text>
+            <text x="80" y="88" text-anchor="middle" font-size="9" fill="#888780">HOCH</text>
+            <text x="22" y="88" text-anchor="middle" font-size="8" fill="#888780">0</text>
+            <text x="138" y="88" text-anchor="middle" font-size="8" fill="#888780">100</text>
+          </svg>
+          <div class="metric-delta delta-up" style="display:inline-flex;margin-top:4px">▲ +8 vs. letzte Woche</div>
+        </div>
+
+        <!-- Trend chart -->
+        <div class="section-card" style="margin:0">
+          <div class="section-title">Finding-Trend (4 Wochen)</div>
+          <div style="display:flex;align-items:flex-end;gap:2px;height:70px;padding:0 4px">
+            <div style="flex:1;display:flex;flex-direction:column;gap:1px;align-items:center;height:100%;justify-content:flex-end">
+              <div style="width:100%;height:40%;background:#dc262640;border-radius:2px 2px 0 0"></div>
+              <div style="width:100%;height:60%;background:var(--accent);opacity:0.6;border-radius:2px 2px 0 0"></div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:1px;align-items:center;height:100%;justify-content:flex-end">
+              <div style="width:100%;height:35%;background:#dc262640;border-radius:2px 2px 0 0"></div>
+              <div style="width:100%;height:50%;background:var(--accent);opacity:0.6;border-radius:2px 2px 0 0"></div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:1px;align-items:center;height:100%;justify-content:flex-end">
+              <div style="width:100%;height:50%;background:#dc2626;border-radius:2px 2px 0 0"></div>
+              <div style="width:100%;height:70%;background:var(--accent);border-radius:2px 2px 0 0"></div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:1px;align-items:center;height:100%;justify-content:flex-end">
+              <div style="width:100%;height:55%;background:#dc2626;border-radius:2px 2px 0 0;opacity:0.9"></div>
+              <div style="width:100%;height:80%;background:var(--accent);border-radius:2px 2px 0 0"></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:2px;margin-top:4px;padding:0 4px">
+            <span style="flex:1;font-size:9px;color:var(--text-3);text-align:center">KW22</span>
+            <span style="flex:1;font-size:9px;color:var(--text-3);text-align:center">KW23</span>
+            <span style="flex:1;font-size:9px;color:var(--text-3);text-align:center">KW24</span>
+            <span style="flex:1;font-size:9px;color:var(--text-3);text-align:center">KW25</span>
+          </div>
+          <div style="display:flex;gap:12px;margin-top:8px">
+            <div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:var(--danger)"></div><span style="font-size:10px;color:var(--text-3)">Critical</span></div>
+            <div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:var(--accent)"></div><span style="font-size:10px;color:var(--text-3)">Andere</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Findings -->
+      <div class="section-card">
+        <div class="section-title">
+          Neueste Findings
+          <a style="font-size:12px;color:var(--accent);font-weight:400;cursor:pointer">Alle ansehen →</a>
+        </div>
+        <table class="table">
+          <thead><tr><th>Finding</th><th>Severity</th><th>Target</th><th>Gefunden</th><th>Owner</th></tr></thead>
+          <tbody>
+            <tr>
+              <td style="color:var(--text);font-weight:500">SQL Injection in /api/users</td>
+              <td><span class="badge badge-critical">Critical</span></td>
+              <td style="font-size:12px;color:var(--text-3)">api.acme-corp.de</td>
+              <td style="font-size:12px;color:var(--text-3)">vor 2h</td>
+              <td><span style="font-size:12px;color:var(--danger)">Kein Owner</span></td>
+            </tr>
+            <tr>
+              <td style="color:var(--text);font-weight:500">JWT ohne Expiry</td>
+              <td><span class="badge badge-high">High</span></td>
+              <td style="font-size:12px;color:var(--text-3)">api.acme-corp.de</td>
+              <td style="font-size:12px;color:var(--text-3)">vor 4h</td>
+              <td><span style="font-size:12px;color:var(--text-2)">Max K.</span></td>
+            </tr>
+            <tr>
+              <td style="color:var(--text);font-weight:500">CORS Misconfiguration</td>
+              <td><span class="badge badge-medium">Medium</span></td>
+              <td style="font-size:12px;color:var(--text-3)">staging.acme-corp.de</td>
+              <td style="font-size:12px;color:var(--text-3)">vor 1d</td>
+              <td><span style="font-size:12px;color:var(--text-2)">Anna M.</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- DASHBOARD CISO VIEW -->
+    <div class="page" id="page-dash-ciso">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Security Dashboard <span style="font-size:13px;color:var(--purple);font-weight:600;background:var(--purple-bg);padding:2px 8px;border-radius:4px;margin-left:8px">CISO-Ansicht</span></div>
+          <div class="page-subtitle">30-Sekunden-Briefing · Letzte Aktualisierung: vor 3 Min.</div>
+        </div>
+        <button class="btn btn-secondary btn-sm">Engineer-Ansicht</button>
+      </div>
+
+      <div class="ai-brief">
+        <div class="ai-label">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#7c3aed" stroke-width="2"><path d="M8 1l2 5h5l-4 3 1.5 5L8 11l-4.5 3L5 9 1 6h5z"/></svg>
+          KI-Briefing · heute 09:14 Uhr
+        </div>
+        <p><strong>3 Critical Findings</strong> erfordern Entscheidungen — davon 2 ohne Owner seit über 48h. Der Risiko-Score ist diese Woche um 8 Punkte gestiegen, hauptsächlich durch eine neu entdeckte SQL-Injection in der User-API. Die anderen Teams haben 4 High-Findings geschlossen. <strong>Handlungsbedarf heute: Owner zuweisen für CVE-2024-1337 und CORS-Finding eskalieren.</strong></p>
+      </div>
+
+      <div class="grid grid-3">
+        <div class="metric-card" style="border-color:#fca5a5">
+          <div class="metric-label">Erfordert Entscheidung</div>
+          <div class="metric-value danger">3</div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:4px">Kein Owner · >48h offen</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Compliance-Score</div>
+          <div class="metric-value warning">74%</div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:4px">OWASP Top 10 Basis</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">SLA-Erfüllung (Critical)</div>
+          <div class="metric-value success">87%</div>
+          <div class="metric-delta delta-up">▲ Ziel: 95% in 30 Tagen</div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="section-title">Was erfordert deine Entscheidung?</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:var(--r);border:1.5px solid #fca5a5;background:var(--danger-bg)">
+            <span class="badge badge-critical">Critical</span>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600;color:var(--text)">SQL Injection /api/users</div>
+              <div style="font-size:11px;color:var(--text-3)">Kein Owner · 52h offen</div>
+            </div>
+            <button class="btn btn-danger btn-sm">Owner zuweisen</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:var(--r);border:1.5px solid #fca5a5;background:var(--danger-bg)">
+            <span class="badge badge-critical">Critical</span>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600;color:var(--text)">Exposed Admin Panel</div>
+              <div style="font-size:11px;color:var(--text-3)">Kein Owner · 48h offen</div>
+            </div>
+            <button class="btn btn-danger btn-sm">Owner zuweisen</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DASHBOARD EMPTY -->
+    <div class="page" id="page-dash-empty">
+      <div class="page-header">
+        <div class="page-title">Security Dashboard</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 40px;text-align:center">
+        <div style="width:72px;height:72px;background:var(--bg-3);border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:20px">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" stroke="var(--text-3)" stroke-width="1.5"><circle cx="18" cy="18" r="14"/><path d="M18 11v7l4 4"/></svg>
+        </div>
+        <h3 style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:8px">Noch keine Scan-Ergebnisse</h3>
+        <p style="font-size:14px;color:var(--text-2);max-width:360px;line-height:1.6;margin-bottom:24px">Starte deinen ersten Scan, um Security-Daten auf dem Dashboard zu sehen. Das dauert in der Regel 5–15 Minuten.</p>
+        <button class="btn btn-primary">Ersten Scan starten →</button>
+      </div>
+    </div>
+
+    <!-- CRITICAL ALERT MID-SCAN -->
+    <div class="page" id="page-dash-critical">
+      <div class="page-header">
+        <div class="page-title">Security Dashboard</div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2)">
+          <div class="dot dot-warning"></div>
+          Scan läuft... 62%
+        </div>
+      </div>
+
+      <div class="banner banner-danger" style="border-width:2px">
+        <svg class="banner-icon" viewBox="0 0 18 18" fill="none" stroke="#dc2626" stroke-width="2.5"><path d="M9 1L1 17h16z"/><line x1="9" y1="7" x2="9" y2="11"/><circle cx="9" cy="14" r="0.8" fill="#dc2626"/></svg>
+        <div class="banner-text">
+          <strong>Critical Finding während laufendem Scan entdeckt</strong><br>
+          <span style="font-size:12px">SQL Injection in /api/users — Remote Code Execution möglich. Scan läuft weiter im Hintergrund.</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          <button class="btn btn-danger btn-sm">Sofort ansehen</button>
+          <button class="btn btn-secondary btn-sm">Ignorieren</button>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="section-title">Scan-Fortschritt</div>
+        <div class="prog" style="margin-bottom:8px"><div class="prog-fill" style="width:62%;background:var(--accent)"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-3)">
+          <span>62% abgeschlossen</span>
+          <span>Noch ~6 Min.</span>
+        </div>
+        <div style="margin-top:12px;display:flex;flex-direction:column;gap:4px">
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px"><div class="dot dot-success"></div><span>Port-Scan · <span style="color:var(--text-3)">1.247 Ports geprüft</span></span></div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px"><div class="dot dot-success"></div><span>Service Discovery · <span style="color:var(--text-3)">12 Services</span></span></div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px"><div class="dot dot-warning"></div><span>Vulnerability Scan · <span style="color:var(--text-3)">laufend...</span></span></div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px"><div class="dot dot-neutral"></div><span style="color:var(--text-3)">AI Analysis · ausstehend</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NOTIFICATIONS -->
+    <div class="page" id="page-notifications">
+      <div class="page-header">
+        <div class="page-title">Benachrichtigungen</div>
+        <button class="btn btn-secondary btn-sm">Alle als gelesen</button>
+      </div>
+      <div class="notif unread">
+        <div class="notif-dot"></div>
+        <div class="notif-text"><strong>Critical Finding:</strong> SQL Injection in /api/users entdeckt — Remote Code Execution möglich. <a style="color:var(--accent);cursor:pointer">Ansehen →</a></div>
+        <div class="notif-time">vor 2h</div>
+      </div>
+      <div class="notif unread">
+        <div class="notif-dot"></div>
+        <div class="notif-text"><strong>Scan abgeschlossen:</strong> api.acme-corp.de — 23 Findings (3 Critical, 9 High). <a style="color:var(--accent);cursor:pointer">Report ansehen →</a></div>
+        <div class="notif-time">vor 3h</div>
+      </div>
+      <div class="notif">
+        <div style="width:8px;height:8px;flex-shrink:0;margin-top:4px"></div>
+        <div class="notif-text"><strong>Finding geschlossen:</strong> JWT ohne Expiry von Max K. als behoben markiert und verifiziert.</div>
+        <div class="notif-time">vor 1d</div>
+      </div>
+      <div class="notif">
+        <div style="width:8px;height:8px;flex-shrink:0;margin-top:4px"></div>
+        <div class="notif-text"><strong>Team-Einladung:</strong> Lena S. hat deine Einladung angenommen und ist dem Workspace beigetreten.</div>
+        <div class="notif-time">vor 2d</div>
+      </div>
+    </div>
+
+    <!-- SCAN CONFIG -->
+    <div class="page" id="page-scan-config">
+      <div class="page-header">
+        <div class="page-title">Neuen Scan konfigurieren</div>
+      </div>
+      <div class="section-card">
+        <div class="section-title">Ziel & Umfang</div>
+        <div class="field">
+          <label>Target</label>
+          <select class="input">
+            <option selected>api.acme-corp.de</option>
+            <option>staging.acme-corp.de</option>
+            <option>+ Target hinzufügen</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Scan-Profil</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <div style="padding:12px;border:2px solid var(--accent);border-radius:var(--r);background:#fff3ee;cursor:pointer">
+              <div style="font-size:12px;font-weight:700;color:var(--accent)">SCHNELL</div>
+              <div style="font-size:11px;color:var(--text-3);margin-top:2px">~5 Min. · Top-Risiken</div>
+            </div>
+            <div style="padding:12px;border:1.5px solid var(--border);border-radius:var(--r);cursor:pointer">
+              <div style="font-size:12px;font-weight:700;color:var(--text)">STANDARD</div>
+              <div style="font-size:11px;color:var(--text-3);margin-top:2px">~15 Min. · OWASP Top 10</div>
+            </div>
+            <div style="padding:12px;border:1.5px solid var(--border);border-radius:var(--r);cursor:pointer">
+              <div style="font-size:12px;font-weight:700;color:var(--text)">KOMPLETT</div>
+              <div style="font-size:11px;color:var(--text-3);margin-top:2px">~45 Min. · Alle Checks</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="section-card">
+        <div class="section-title">Erweiterte Optionen</div>
+        <div class="toggle-row">
+          <div><div class="toggle-info">Authenticated Scan</div><div class="toggle-desc">API-Key / Session-Cookie für Auth-Endpoints</div></div>
+          <div class="toggle on"><div class="toggle-thumb"></div></div>
+        </div>
+        <div class="toggle-row">
+          <div><div class="toggle-info">Rate Limiting beachten</div><div class="toggle-desc">Langsamer scannen um WAF nicht zu triggern</div></div>
+          <div class="toggle on"><div class="toggle-thumb"></div></div>
+        </div>
+        <div class="toggle-row">
+          <div><div class="toggle-info">Subdomain-Enumeration</div><div class="toggle-desc">Automatisch weitere Subdomains entdecken</div></div>
+          <div class="toggle off"><div class="toggle-thumb"></div></div>
+        </div>
+        <div class="toggle-row">
+          <div><div class="toggle-info">Scan planen</div><div class="toggle-desc">Automatisch täglich / wöchentlich starten</div></div>
+          <div class="toggle off"><div class="toggle-thumb"></div></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-secondary">Abbrechen</button>
+        <button class="btn btn-primary">Scan starten →</button>
+      </div>
+    </div>
+
+    <!-- SCAN RUNNING -->
+    <div class="page" id="page-scan-running">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Scan läuft</div>
+          <div class="page-subtitle">api.acme-corp.de · Standard-Profil · gestartet 09:14 Uhr</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" style="color:var(--danger);border-color:var(--danger)">Abbrechen</button>
+      </div>
+      <div class="section-card">
+        <div class="section-title" style="margin-bottom:8px">Gesamt-Fortschritt</div>
+        <div class="prog" style="height:8px;margin-bottom:8px"><div class="prog-fill" style="width:62%;background:var(--accent)"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-3);margin-bottom:20px"><span>62%</span><span>Noch ~6 Min.</span></div>
+        <div class="scan-step">
+          <div class="step-icon done"><svg viewBox="0 0 16 16" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="3 9 6 12 13 5"/></svg></div>
+          <div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--text)">Port-Scan</div><div style="font-size:12px;color:var(--text-3)">1.247 Ports geprüft · 12 offen</div></div>
+          <span style="font-size:11px;color:var(--success)">✓ Fertig</span>
+        </div>
+        <div class="scan-step">
+          <div class="step-icon done"><svg viewBox="0 0 16 16" fill="none" stroke="#16a34a" stroke-width="2.5"><polyline points="3 9 6 12 13 5"/></svg></div>
+          <div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--text)">Service Discovery</div><div style="font-size:12px;color:var(--text-3)">12 Services identifiziert</div></div>
+          <span style="font-size:11px;color:var(--success)">✓ Fertig</span>
+        </div>
+        <div class="scan-step">
+          <div class="step-icon running"><svg viewBox="0 0 16 16" fill="none" stroke="#d97706" stroke-width="2"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg></div>
+          <div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--text)">Vulnerability Scan</div><div style="font-size:12px;color:var(--text-3)">87 / 210 Checks abgeschlossen</div></div>
+          <span style="font-size:11px;color:var(--warning)">Läuft...</span>
+        </div>
+        <div class="scan-step">
+          <div class="step-icon pending"><svg viewBox="0 0 16 16" fill="none" stroke="var(--text-3)" stroke-width="2"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg></div>
+          <div style="flex:1"><div style="font-size:13px;font-weight:500;color:var(--text-2)">AI-Analyse & Priorisierung</div><div style="font-size:12px;color:var(--text-3)">Startet nach Vulnerability-Scan</div></div>
+          <span style="font-size:11px;color:var(--text-3)">Ausstehend</span>
+        </div>
+        <div class="scan-step">
+          <div class="step-icon pending"><svg viewBox="0 0 16 16" fill="none" stroke="var(--text-3)" stroke-width="2"><path d="M4 2h8l2 2v10H2V4z"/><path d="M4 7h8M4 10h5"/></svg></div>
+          <div style="flex:1"><div style="font-size:13px;font-weight:500;color:var(--text-2)">Report generieren</div><div style="font-size:12px;color:var(--text-3)">Ausstehend</div></div>
+          <span style="font-size:11px;color:var(--text-3)">Ausstehend</span>
+        </div>
+      </div>
+      <div class="note">Live-Updates per WebSocket · du kannst diese Seite schließen, der Scan läuft im Hintergrund weiter.</div>
+    </div>
+
+    <!-- SCAN ERROR -->
+    <div class="page" id="page-scan-error">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Scan fehlgeschlagen</div>
+          <div class="page-subtitle">api.acme-corp.de · abgebrochen 09:28 Uhr</div>
+        </div>
+      </div>
+      <div class="banner banner-danger">
+        <svg class="banner-icon" viewBox="0 0 18 18" fill="none" stroke="#dc2626" stroke-width="2"><circle cx="9" cy="9" r="8"/><line x1="9" y1="5" x2="9" y2="9"/><circle cx="9" cy="12.5" r="0.8" fill="#dc2626"/></svg>
+        <div class="banner-text">
+          <strong>Verbindungsfehler:</strong> Rate-Limit der Ziel-API überschritten. Server hat mit 429 Too Many Requests geantwortet.
+          <div style="font-size:11px;margin-top:4px;font-family:var(--mono)">GET /api/v2/users → HTTP 429 · Retry-After: 3600s</div>
+        </div>
+      </div>
+      <div class="section-card">
+        <div class="section-title">Was ist passiert?</div>
+        <p style="font-size:13px;color:var(--text-2);line-height:1.6;margin-bottom:12px">Der Vulnerability-Scan hat das Rate-Limit von api.acme-corp.de überschritten. 87 von 210 Checks wurden abgeschlossen.</p>
+        <div style="background:var(--bg-2);border-radius:var(--r);padding:12px;margin-bottom:12px">
+          <p style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:8px">LÖSUNGEN</p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-2)">
+              <div style="width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">1</div>
+              Scan-Geschwindigkeit reduzieren (Rate-Limit-Modus aktivieren)
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-2)">
+              <div style="width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">2</div>
+              Scan in den nächsten Wartungsfenster planen
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-2)">
+              <div style="width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">3</div>
+              IP-Whitelist für Scanner-IPs beim Betreiber beantragen
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary">Einstellungen anpassen</button>
+          <button class="btn btn-primary">Erneut versuchen</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCAN QUEUE -->
+    <div class="page" id="page-scan-queue">
+      <div class="page-header">
+        <div class="page-title">Scan-Warteschlange</div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2)">
+          <div class="dot dot-success"></div>
+          Scanner aktiv · 1 Scan läuft
+        </div>
+      </div>
+      <div class="section-card">
+        <div class="section-title">Aktuell laufend</div>
+        <div style="display:flex;align-items:center;gap:12px;padding:14px;background:var(--success-bg);border-radius:var(--r);border:1px solid #86efac">
+          <div class="dot dot-warning"></div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600;color:var(--text)">api.acme-corp.de</div>
+            <div style="font-size:11px;color:var(--text-3)">Standard · gestartet 09:14</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:13px;font-weight:600;color:var(--text)">62%</div>
+            <div style="font-size:11px;color:var(--text-3)">~6 Min.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" style="color:var(--danger)">Stop</button>
+        </div>
+      </div>
+      <div class="section-card">
+        <div class="section-title">Warteschlange (2)</div>
+        <div class="queue-item">
+          <div class="queue-pos">#1</div>
+          <div class="queue-info">
+            <div class="queue-name">staging.acme-corp.de</div>
+            <div class="queue-eta">Schnell-Profil · startet in ~8 Min.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm">Entfernen</button>
+        </div>
+        <div class="queue-item">
+          <div class="queue-pos">#2</div>
+          <div class="queue-info">
+            <div class="queue-name">api.acme-corp.de</div>
+            <div class="queue-eta">Komplett-Profil · Nacht-Scan 02:00 Uhr</div>
+          </div>
+          <button class="btn btn-secondary btn-sm">Entfernen</button>
+        </div>
+      </div>
+      <div class="note">Scans werden sequenziell ausgeführt. Upgrade auf Pro für parallele Scans.</div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /shell -->
+
+<script>
+function show(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const page = document.getElementById('page-' + id);
+  if (page) page.classList.add('active');
+  const tabs = document.querySelectorAll('.tab');
+  const tabMap = {
+    'dash': 0, 'dash-ciso': 1, 'dash-empty': 2, 'dash-critical': 3,
+    'notifications': 4, 'scan-config': 5, 'scan-running': 6, 'scan-error': 7, 'scan-queue': 8
+  };
+  if (tabMap[id] !== undefined) tabs[tabMap[id]].classList.add('active');
+}
+</script>
+</body>
+</html>
