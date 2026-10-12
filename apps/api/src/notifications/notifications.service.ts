@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { Subject } from 'rxjs';
+import { RedisService } from '../redis/redis.service';
+import { withCronLock, utcDayKey } from '../common/cron-lock';
 
 export type NotificationType =
   | 'scan.completed'
@@ -71,7 +73,10 @@ export class NotificationsService {
 
   private readonly sseSubjects = new Map<string, Subject<NotificationEvent>>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   // ── SSE subscription management ───────────────────────────────
 
@@ -233,27 +238,47 @@ export class NotificationsService {
 
   @Cron(CronExpression.EVERY_DAY_AT_8AM)
   async sendDailyDigest() {
+    await withCronLock(
+      this.redis,
+      `notifications:daily-digest:${utcDayKey()}`,
+      3600,
+      () => this.runDailyDigest(),
+      { releaseOnFinish: false },
+    );
+  }
+
+  private async runDailyDigest() {
     // Check which users have digest enabled
     const digestPrefs = await this.prisma.userNotificationPreference.findMany({
       where: { eventType: 'digest', enabled: true },
     });
 
     for (const pref of digestPrefs) {
-      const user = await this.prisma.user.findUnique({
-        where: { id: pref.userId },
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          memberships: { select: { organizationId: true } },
-        },
-      });
+      let user;
+      try {
+        user = await this.prisma.user.findUnique({
+          where: { id: pref.userId },
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            memberships: { select: { organizationId: true } },
+          },
+        });
+      } catch (err: unknown) {
+        this.logger.warn(`Digest user lookup failed: user=${pref.userId} error=${err instanceof Error ? err.name : 'UnknownError'}`);
+        continue;
+      }
       if (!user) continue;
       for (const { organizationId } of user.memberships) {
-        const unread = await this.getUnreadForUser(user.id, organizationId, 20);
-        if (unread.length === 0) continue;
-        this.logger.log(`Digest: ${unread.length} unread notifications for ${user.email}`);
-        // MailService would be injected in a production scenario; log only to avoid circular dep
+        try {
+          const unread = await this.getUnreadForUser(user.id, organizationId, 20);
+          if (unread.length === 0) continue;
+          this.logger.log(`Digest: ${unread.length} unread notifications for ${user.email}`);
+          // MailService would be injected in a production scenario; log only to avoid circular dep
+        } catch (err: unknown) {
+          this.logger.warn(`Digest failed: org=${organizationId} error=${err instanceof Error ? err.name : 'UnknownError'}`);
+        }
       }
     }
   }

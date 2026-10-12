@@ -5,6 +5,8 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { IntegrationsService } from '../integrations/integrations.service';
+import { RedisService } from '../redis/redis.service';
+import { withCronLock, utcDayKey } from '../common/cron-lock';
 
 const VALID_DECISIONS = new Set(['ACCEPTED', 'DEFERRED', 'FALSE_POSITIVE']);
 
@@ -14,6 +16,9 @@ const DECISION_STATUS_MAP: Record<string, string> = {
   FALSE_POSITIVE: 'FALSE_POSITIVE',
 };
 
+/** Max. verarbeitete Einträge pro Cron-Lauf (Rest beim nächsten Lauf). */
+export const MAX_EXPIRE_PER_RUN = 200;
+
 @Injectable()
 export class RiskAcceptanceService {
   private readonly logger = new Logger(RiskAcceptanceService.name);
@@ -22,6 +27,7 @@ export class RiskAcceptanceService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly integrations: IntegrationsService,
+    private readonly redis: RedisService,
   ) {}
 
   async get(findingId: string, orgId: string) {
@@ -146,30 +152,46 @@ export class RiskAcceptanceService {
   // Runs daily at 08:00 — expire stale risk acceptances
   @Cron(CronExpression.EVERY_DAY_AT_8AM)
   async expireStaleAcceptances() {
+    await withCronLock(
+      this.redis,
+      `risk-acceptance:expire:${utcDayKey()}`,
+      3600,
+      () => this.runExpiry(),
+      { releaseOnFinish: false },
+    );
+  }
+
+  private async runExpiry() {
     const now = new Date();
     const expired = await this.prisma.riskAcceptance.findMany({
       where: { revokedAt: null, expiresAt: { not: null, lte: now } },
       include: {
         finding: { select: { id: true, title: true, createdById: true, organizationId: true, scan: { select: { projectId: true } } } },
       },
+      orderBy: { expiresAt: 'asc' },
+      take: MAX_EXPIRE_PER_RUN,
     });
 
     for (const acc of expired) {
-      await this.prisma.$transaction([
-        this.prisma.riskAcceptance.update({ where: { id: acc.id }, data: { revokedAt: now } }),
-        this.prisma.finding.update({ where: { id: acc.findingId }, data: { status: 'OPEN' } }),
-      ]);
+      try {
+        await this.prisma.$transaction([
+          this.prisma.riskAcceptance.update({ where: { id: acc.id }, data: { revokedAt: now } }),
+          this.prisma.finding.update({ where: { id: acc.findingId }, data: { status: 'OPEN' } }),
+        ]);
 
-      this.notifications.create({
-        type: 'risk_acceptance.expired',
-        title: 'Risk acceptance expired',
-        body: acc.finding.title,
-        link: `/projects/${acc.finding.scan?.projectId}/findings/${acc.findingId}`,
-        userId: acc.approvedById,
-        orgId: acc.organizationId,
-      }).catch(() => null);
+        this.notifications.create({
+          type: 'risk_acceptance.expired',
+          title: 'Risk acceptance expired',
+          body: acc.finding.title,
+          link: `/projects/${acc.finding.scan?.projectId}/findings/${acc.findingId}`,
+          userId: acc.approvedById,
+          orgId: acc.organizationId,
+        }).catch(() => null);
 
-      this.logger.log(`Risk acceptance ${acc.id} expired → finding ${acc.findingId} reopened`);
+        this.logger.log(`Risk acceptance ${acc.id} expired → finding ${acc.findingId} reopened`);
+      } catch (err: unknown) {
+        this.logger.warn(`Risk acceptance expiry failed: id=${acc.id} error=${err instanceof Error ? err.name : 'UnknownError'}`);
+      }
     }
   }
 

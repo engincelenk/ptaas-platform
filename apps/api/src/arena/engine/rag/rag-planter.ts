@@ -41,16 +41,29 @@ export class RagOperationError extends Error {
   }
 }
 
+export type DocIdSource = 'local' | 'server' | 'unknown';
+
+/** Document ids from customer answers end up in URLs and bodies: keep them boring. */
+const SAFE_DOC_ID = /^[A-Za-z0-9_:-]{1,128}$/;
+
+export function isSafeDocId(v: string): boolean {
+  return SAFE_DOC_ID.test(v);
+}
+
 export interface RagDoc {
   goalId: string;
   goalKey: string;
   docId: string;
+  /** Where `docId` comes from: our own id (`local`), the target's ingest answer (`server`) or not known (`unknown`). */
+  docIdSource: DocIdSource;
   nonce: string;
   tokens: AttemptTokens;
   topic: string;
   topicPhrase: string;
   /** Test document body. Never logged, never put into audit metadata. */
   content: string;
+  /** When PTaaS decided to plant it (persisted before the ingest request). */
+  plannedAt?: Date;
   plantedAt?: Date;
   deletedAt?: Date;
   deleteError?: string;
@@ -100,7 +113,7 @@ export class RagPlanter {
       .split('{{TOKEN}}')
       .join(tokens.marker ?? '')
       .slice(0, ARENA_LIMITS.maxRagDocChars);
-    return { goalId: goal.id, goalKey: goal.key, docId: `ptaas-${nonce}`, nonce, tokens, topic, topicPhrase, content };
+    return { goalId: goal.id, goalKey: goal.key, docId: `ptaas-${nonce}`, docIdSource: 'local', nonce, tokens, topic, topicPhrase, content };
   }
 
   /** Harmless question about the document topic. It never contains the token. */
@@ -150,8 +163,13 @@ export class RagPlanter {
     }
   }
 
-  /** Returns the doc id the target uses (from `docIdPath` if configured). */
-  async ingest(ctx: RagHttpContext, config: RagConfig, doc: RagDoc): Promise<string> {
+  /**
+   * Plants the document. Returns the id to delete it with:
+   *  - `server`: taken from the ingest answer via `docIdPath` (validated: `^[A-Za-z0-9_:-]{1,128}$`),
+   *  - `local`: our own id (no `docIdPath` configured; the target was told this id in the body),
+   *  - `unknown`: `docIdPath` configured but the answer has no usable id — the document MAY exist, we just cannot name it.
+   */
+  async ingest(ctx: RagHttpContext, config: RagConfig, doc: RagDoc): Promise<{ docId: string; source: DocIdSource }> {
     if (!config.ingest) throw new RagOperationError('no_ingest_configured');
     const url = this.assertSameHostUrl(config.ingest.url, ctx.endpointUrl);
     const body = replaceInValues(config.ingest.bodyTemplate, { '{{content}}': doc.content, '{{docId}}': doc.docId });
@@ -160,23 +178,30 @@ export class RagPlanter {
     if (config.ingest.docIdPath) {
       try {
         const v = getAtPath(JSON.parse(res.body), config.ingest.docIdPath);
-        if ((typeof v === 'string' && v.length > 0 && v.length <= 200) || typeof v === 'number') return String(v);
+        const id = typeof v === 'number' ? String(v) : typeof v === 'string' ? v : '';
+        if (isSafeDocId(id)) return { docId: id, source: 'server' };
       } catch {
-        /* fall through: use our own id */
+        /* fall through */
       }
-      throw new RagOperationError('doc_id_missing');
+      return { docId: doc.docId, source: 'unknown' };
     }
-    return doc.docId;
+    return { docId: doc.docId, source: 'local' };
   }
 
   async remove(ctx: RagHttpContext, config: RagConfig, doc: RagDoc): Promise<void> {
     if (!config.delete) throw new RagOperationError('no_delete_configured');
+    // Never delete (or claim to have deleted) something we cannot name, and never use an unvalidated id in a URL/body.
+    if (doc.docIdSource === 'unknown' || !isSafeDocId(doc.docId)) throw new RagOperationError('doc_id_unknown');
     const rawUrl = config.delete.url.split('{{docId}}').join(encodeURIComponent(doc.docId));
     const url = this.assertSameHostUrl(rawUrl, ctx.endpointUrl);
     const body = config.delete.bodyTemplate === undefined ? undefined : replaceInValues(config.delete.bodyTemplate, { '{{docId}}': doc.docId });
     const res = await this.call(ctx, url, config.delete.method, body);
-    // 404 = already gone: that is the desired end state.
-    if ((res.status < 200 || res.status >= 300) && res.status !== 404) throw new RagOperationError(`http_${res.status}`);
+    if (res.status === 404) {
+      // 404 only proves "gone" if the id came from the target itself; for our local id it may simply be the wrong id.
+      if (doc.docIdSource === 'server') return;
+      throw new RagOperationError('doc_id_unknown');
+    }
+    if (res.status < 200 || res.status >= 300) throw new RagOperationError(`http_${res.status}`);
   }
 
   /** Waits for the customer's indexer; `checkpoint` is called every second (kill-switch/budget). */

@@ -10,6 +10,8 @@ import { SsrfGuardService } from '../ssrf/ssrf-guard.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ASM_QUEUE, AsmJobData } from './asm.constants';
+import { RedisService } from '../redis/redis.service';
+import { withCronLock, utcDayKey } from '../common/cron-lock';
 
 @Injectable()
 export class AsmService {
@@ -21,6 +23,7 @@ export class AsmService {
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
     @InjectQueue(ASM_QUEUE) private readonly asmQueue: Queue,
+    private readonly redis: RedisService,
   ) {}
 
   // ─── Start Discovery ─────────────────────────────────────────────────────────
@@ -230,6 +233,16 @@ export class AsmService {
 
   @Cron(CronExpression.EVERY_DAY_AT_6AM)
   async scheduleMonitoring() {
+    await withCronLock(
+      this.redis,
+      `asm:monitoring:${utcDayKey()}`,
+      3600,
+      () => this.runScheduledMonitoring(),
+      { releaseOnFinish: false },
+    );
+  }
+
+  private async runScheduledMonitoring() {
     // Re-queue discovery for all projects that have had at least one completed ASM scan
     const completedScans = await this.prisma.asmScan.findMany({
       where: { status: 'COMPLETED' },
@@ -237,8 +250,39 @@ export class AsmService {
       select: { projectId: true, organizationId: true, rootDomain: true },
     });
 
+    let scheduled = 0;
     for (const scan of completedScans) {
       try {
+        // In-Flight-Schutz: kein zweiter Scan, solange einer PENDING/RUNNING ist
+        const inFlight = await this.prisma.asmScan.findFirst({
+          where: {
+            projectId: scan.projectId,
+            organizationId: scan.organizationId,
+            rootDomain: scan.rootDomain,
+            status: { in: ['PENDING', 'RUNNING'] },
+          },
+          select: { id: true },
+        });
+        if (inFlight) {
+          this.logger.log(`ASM monitoring skipped (scan in flight): project=${scan.projectId}`);
+          continue;
+        }
+
+        // Domain muss weiterhin verifiziert sein (wie beim manuellen Start)
+        const verifiedTarget = await this.prisma.target.findFirst({
+          where: {
+            projectId: scan.projectId,
+            organizationId: scan.organizationId,
+            value: scan.rootDomain,
+            verificationStatus: 'VERIFIED',
+          },
+          select: { id: true },
+        });
+        if (!verifiedTarget) {
+          this.logger.warn(`ASM monitoring skipped (domain not verified): project=${scan.projectId} domain=${scan.rootDomain}`);
+          continue;
+        }
+
         const asmScan = await this.prisma.asmScan.create({
           data: {
             projectId: scan.projectId,
@@ -262,12 +306,13 @@ export class AsmService {
           where: { id: asmScan.id },
           data: { bullJobId: asmScan.id },
         });
-      } catch (err) {
-        this.logger.warn(`Failed to schedule ASM monitoring for ${scan.rootDomain}: ${err}`);
+        scheduled++;
+      } catch (err: unknown) {
+        this.logger.warn(`Failed to schedule ASM monitoring for project=${scan.projectId} domain=${scan.rootDomain}: ${err instanceof Error ? err.name : 'UnknownError'}`);
       }
     }
 
-    this.logger.log(`Scheduled ASM monitoring for ${completedScans.length} project/domain pairs`);
+    this.logger.log(`Scheduled ASM monitoring for ${scheduled}/${completedScans.length} project/domain pairs`);
   }
 
   async listOrgAssets(orgId: string, status?: string, type?: string, search?: string) {

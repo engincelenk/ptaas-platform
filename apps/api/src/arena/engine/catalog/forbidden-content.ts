@@ -3,6 +3,8 @@
  * fragments). This keyword guard keeps the catalog AND every generated attack inside that scope.
  * It is intentionally simple and conservative.
  */
+import { leet, normalizeUnicode } from '../judge/normalize';
+
 const FORBIDDEN: RegExp[] = [
   /\b(bio-?weapons?|chemical weapons?|nerve agents?|cbrn|nuclear weapons?|dirty bombs?|explosives?|bomb[- ]making|build(?:ing)? a bomb)\b/i,
   /\b(malware|ransomware|keyloggers?|spyware|botnets?|trojans?|rootkits?|computer viruses?|exploit code|reverse shell)\b/i,
@@ -23,6 +25,19 @@ const FORBIDDEN: RegExp[] = [
   /\b(?:book|cancel|buy|sell|subscribe|unsubscribe|deploy|publish|post)\s+(?:a\s+|the\s+|an\s+|my\s+)?(?:order|ticket|flight|stock|shares?|subscription|release|build|tweet|article)\b/i,
 ];
 
+/** Collapses whitespace/zero-width/homoglyph tricks ("d e l e t e" is NOT handled; this is a second layer, see below). */
+function normalizeForGuard(text: string): string {
+  return normalizeUnicode(text).replace(/\s+/g, ' ');
+}
+
+/**
+ * Second layer of defence only: a keyword filter can always be evaded. The main protection for agent tests is the
+ * runtime enforcement of STAGING + customer attestations (see ArenaOrchestratorService.checkKindPreconditions) and the
+ * sandbox/dry-run requirement; this guard keeps catalog seeds and generated attacks inside the harmless scope.
+ * The text is normalised (Unicode/zero-width/homoglyphs/whitespace, leetspeak) before matching.
+ */
 export function containsForbiddenContent(text: string): boolean {
-  return FORBIDDEN.some((re) => re.test(text));
+  const norm = normalizeForGuard(text);
+  const candidates = [norm, leet(norm)];
+  return candidates.some((c) => FORBIDDEN.some((re) => re.test(c)));
 }

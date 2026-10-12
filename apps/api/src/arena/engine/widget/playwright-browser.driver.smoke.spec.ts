@@ -2,11 +2,14 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { createServer as createHttpsServer } from 'node:https';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { createServer as createTcpServer } from 'node:net';
+import type { AddressInfo, Server as TcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chromium } from 'playwright-core';
+import { RunStopError, TargetUnsafeError } from '../run-control';
+import { WidgetSessionExpiredError } from './widget-session-options';
 import { PlaywrightBrowserDriver } from './playwright-browser.driver';
 import { BrowserUnavailableError } from './widget.types';
 import type { WidgetConfig } from './widget.types';
@@ -41,7 +44,7 @@ const localChromium = findLocalChromium();
 
 const hasOpenssl = spawnSync('openssl', ['version']).status === 0;
 
-const PAGE = (otherPort: number, mode: 'text' | 'html') => `<!doctype html><html><body>
+const PAGE = (otherPort: number, mode: 'text' | 'html', tcpPort: number) => `<!doctype html><html><body>
 <div id="log"></div>
 <input id="in" /><button id="send">go</button>
 <script>
@@ -52,6 +55,11 @@ const probe = (name, url, opts) => fetch(url, opts).then(
 probe('otherhost', 'https://other.test:${otherPort}/hit?via=name', { mode: 'no-cors' });
 probe('otherip', 'https://127.0.0.1:${otherPort}/hit?via=ip', { mode: 'no-cors' });
 probe('redirect', '/redir', { mode: 'no-cors' });
+const report = (name, ok) => fetch('/api/log', { method: 'POST', body: name + (ok ? ':REACHED' : ':blocked') });
+try { const ws = new WebSocket('ws://127.0.0.1:${tcpPort}/'); ws.onopen = () => report('ws', true); ws.onerror = () => report('ws', false); }
+catch (e) { report('ws', false); }
+try { const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:127.0.0.1:${tcpPort}' }] }); pc.createDataChannel('x'); pc.createOffer().then((o) => pc.setLocalDescription(o)); report('rtc', true); }
+catch (e) { report('rtc', false); }
 document.getElementById('send').addEventListener('click', async () => {
   const res = await fetch('/api/chat', { method: 'POST', body: document.getElementById('in').value });
   const text = await res.text();
@@ -66,6 +74,9 @@ describe.skipIf(!hasOpenssl)('PlaywrightBrowserDriver (real Chromium smoke)', ()
   let dir: string;
   let widgetServer: Server;
   let otherServer: Server;
+  let tcpServer: TcpServer;
+  let tcpPort = 0;
+  let tcpConnections = 0;
   let widgetPort = 0;
   let otherPort = 0;
   let launchable = false;
@@ -85,6 +96,13 @@ describe.skipIf(!hasOpenssl)('PlaywrightBrowserDriver (real Chromium smoke)', ()
     });
     await new Promise<void>((r) => otherServer.listen(0, '127.0.0.1', r));
     otherPort = (otherServer.address() as AddressInfo).port;
+
+    tcpServer = createTcpServer((sock) => {
+      tcpConnections++;
+      sock.destroy();
+    });
+    await new Promise<void>((r) => tcpServer.listen(0, '127.0.0.1', r));
+    tcpPort = (tcpServer.address() as AddressInfo).port;
 
     widgetServer = createHttpsServer(tls, (req: IncomingMessage, res: ServerResponse) => {
       widgetHits.push(`${req.method} ${req.url}`);
@@ -111,7 +129,7 @@ describe.skipIf(!hasOpenssl)('PlaywrightBrowserDriver (real Chromium smoke)', ()
         });
       } else if (req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(PAGE(otherPort, pageMode));
+        res.end(PAGE(otherPort, pageMode, tcpPort));
       } else {
         res.writeHead(404);
         res.end();
@@ -132,6 +150,7 @@ describe.skipIf(!hasOpenssl)('PlaywrightBrowserDriver (real Chromium smoke)', ()
   afterAll(async () => {
     await new Promise<void>((r) => widgetServer?.close(() => r()));
     await new Promise<void>((r) => otherServer?.close(() => r()));
+    await new Promise<void>((r) => tcpServer?.close(() => r()));
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
@@ -172,6 +191,7 @@ describe.skipIf(!hasOpenssl)('PlaywrightBrowserDriver (real Chromium smoke)', ()
     pageMode = 'text';
     egressLog.length = 0;
     otherHits.length = 0;
+    tcpConnections = 0;
     const session = await driver().open(config(), pinned);
     try {
       await session.send('wait for probes');
@@ -179,8 +199,9 @@ describe.skipIf(!hasOpenssl)('PlaywrightBrowserDriver (real Chromium smoke)', ()
     } finally {
       await session.close();
     }
-    expect([...egressLog].sort()).toEqual(['otherhost:blocked', 'otherip:blocked', 'redirect:blocked']);
+    expect([...egressLog].sort()).toEqual(['otherhost:blocked', 'otherip:blocked', 'redirect:blocked', 'rtc:blocked', 'ws:blocked']);
     expect(otherHits).toEqual([]);
+    expect(tcpConnections).toBe(0);
   }, 60_000);
 
   it('does not execute <img onerror> from the reply text (text-only reading)', async (ctx) => {
@@ -229,6 +250,59 @@ describe.skipIf(!hasOpenssl)('PlaywrightBrowserDriver (real Chromium smoke)', ()
     const d = driver();
     await expect(d.open({ ...config(), pageUrl: `https://other.test:${otherPort}/`, waitAfterOpenMs: 0 }, pinned)).rejects.toThrow();
     expect(otherHits).toEqual([]);
+  }, 60_000);
+
+  it('aborts the session when the kill-switch callback fires (open and send)', async (ctx) => {
+    if (!launchable) return ctx.skip();
+    await expect(driver().open(config(), pinned, { shouldAbort: async () => true })).rejects.toBeInstanceOf(RunStopError);
+
+    let killed = false;
+    const session = await driver().open(config(), pinned, { shouldAbort: async () => killed });
+    killed = true;
+    await expect(session.send('hello')).rejects.toBeInstanceOf(RunStopError);
+    await session.close();
+  }, 60_000);
+
+  it('ends the session as request_cap_exceeded once the request cap is hit', async (ctx) => {
+    if (!launchable) return ctx.skip();
+    otherHits.length = 0;
+    await expect(driver().open(config(), pinned, { maxRequests: 2 })).rejects.toBeInstanceOf(TargetUnsafeError);
+    expect(otherHits).toEqual([]);
+  }, 60_000);
+
+  it('expires the session after the wall-clock limit', async (ctx) => {
+    if (!launchable) return ctx.skip();
+    const session = await driver().open({ ...config(), waitAfterOpenMs: 0 }, pinned, { sessionTimeoutMs: 6_000 });
+    await new Promise((r) => setTimeout(r, 6_500));
+    await expect(session.send('late')).rejects.toBeInstanceOf(WidgetSessionExpiredError);
+    await session.close();
+  }, 60_000);
+
+  it('limits concurrent browsers per process (second open waits for a free slot)', async (ctx) => {
+    if (!launchable) return ctx.skip();
+    const d = new PlaywrightBrowserDriver({ allowedPort: widgetPort, ignoreHttpsErrors: true, stableMs: 300, pollMs: 100, executablePath: localChromium, maxConcurrentBrowsers: 1 });
+    const first = await d.open({ ...config(), waitAfterOpenMs: 0 }, pinned);
+    let secondDone = false;
+    const secondP = d.open({ ...config(), waitAfterOpenMs: 0 }, pinned).then((s) => {
+      secondDone = true;
+      return s;
+    });
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(secondDone).toBe(false);
+    await first.close();
+    const second = await secondP;
+    expect(secondDone).toBe(true);
+    await second.close();
+  }, 60_000);
+
+  it('deletes the per-launch temp HOME directory when the session closes', async (ctx) => {
+    if (!launchable) return ctx.skip();
+    const before = readdirSync(tmpdir()).filter((n) => n.startsWith('arena-browser-'));
+    const session = await driver().open({ ...config(), waitAfterOpenMs: 0 }, pinned);
+    const during = readdirSync(tmpdir()).filter((n) => n.startsWith('arena-browser-') && !before.includes(n));
+    expect(during).toHaveLength(1);
+    await session.close();
+    expect(existsSync(join(tmpdir(), during[0]))).toBe(false);
   }, 60_000);
 
   it('throws BrowserUnavailableError when the browser cannot be launched', async () => {

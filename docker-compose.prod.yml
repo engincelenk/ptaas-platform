@@ -77,11 +77,17 @@ services:
     ports: []
     security_opt:
       - no-new-privileges:true
+    # Hardening: the AI Arena widget transport runs headless Chromium (--no-sandbox) in this container.
+    # Drop all capabilities, bound the process count, and leave headroom for the browser.
+    # Recommended next step: move the browser into a separate secret-less worker container.
+    cap_drop:
+      - ALL
+    pids_limit: 512
     deploy:
       resources:
         limits:
           cpus: "2"
-          memory: 1G
+          memory: 2G
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
       interval: 30s

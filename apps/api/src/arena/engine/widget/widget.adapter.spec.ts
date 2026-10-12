@@ -6,6 +6,7 @@ import { WidgetAdapter } from './widget.adapter';
 import { WidgetAdapterFactory } from './widget-adapter.factory';
 import { WidgetConfigError, parseWidgetConfig } from './widget-config';
 import { isRequestAllowed, hostResolverRules } from './playwright-browser.driver';
+import { WidgetSessionExpiredError } from './widget-session-options';
 import { BrowserUnavailableError } from './widget.types';
 import type { BrowserDriver, PinnedHost, WidgetConfig, WidgetSession } from './widget.types';
 
@@ -172,6 +173,73 @@ describe('WidgetAdapter', () => {
     const { driver } = fakeDriver(async () => 'ok');
     const a = new WidgetAdapter(driver, baseConfig, pinned, { clock: fakeClock() });
     await expect(a.close()).resolves.toBeUndefined();
+  });
+});
+
+describe('WidgetAdapter session options', () => {
+  it('passes shouldAbort and session options to the driver on open', async () => {
+    const seen: unknown[] = [];
+    const driver: BrowserDriver = {
+      open: async (...args: unknown[]) => {
+        seen.push(args[2]);
+        return { send: async () => 'ok', close: async () => undefined };
+      },
+    };
+    const shouldAbort = async () => false;
+    const a = new WidgetAdapter(driver, baseConfig, pinned, { clock: fakeClock(), shouldAbort, sessionOptions: { maxRequests: 5 } });
+    await a.send('x');
+    expect(seen[0]).toEqual({ maxRequests: 5, shouldAbort });
+  });
+
+  it('transparently reopens a fresh session once when the session expired', async () => {
+    let opens = 0;
+    const closed: number[] = [];
+    const driver: BrowserDriver = {
+      open: async () => {
+        const n = ++opens;
+        return {
+          send: async () => {
+            if (n === 1) throw new WidgetSessionExpiredError();
+            return `session${n}`;
+          },
+          close: async () => {
+            closed.push(n);
+          },
+        };
+      },
+    };
+    const a = new WidgetAdapter(driver, baseConfig, pinned, { clock: fakeClock() });
+    expect((await a.send('x')).text).toBe('session2');
+    expect(opens).toBe(2);
+    expect(closed).toEqual([1]);
+    expect(a.stats().failures).toBe(0);
+  });
+
+  it('request-cap errors (TargetUnsafeError) are terminal and not retried', async () => {
+    let opens = 0;
+    const driver: BrowserDriver = {
+      open: async () => {
+        opens++;
+        return { send: async () => { throw new TargetUnsafeError('request_cap_exceeded'); }, close: async () => undefined };
+      },
+    };
+    const a = new WidgetAdapter(driver, baseConfig, pinned, { clock: fakeClock() });
+    await expect(a.send('x')).rejects.toBeInstanceOf(TargetUnsafeError);
+    expect(opens).toBe(1);
+  });
+
+  it('factory forwards shouldAbort', async () => {
+    const seen: unknown[] = [];
+    const driver: BrowserDriver = {
+      open: async (...args: unknown[]) => {
+        seen.push(args[2]);
+        return { send: async () => 'ok', close: async () => undefined };
+      },
+    };
+    const shouldAbort = async () => false;
+    const a = new WidgetAdapterFactory(driver).create({ widgetConfig: baseConfig }, { pinned, clock: fakeClock(), shouldAbort });
+    await a.send('x');
+    expect((seen[0] as { shouldAbort: unknown }).shouldAbort).toBe(shouldAbort);
   });
 });
 

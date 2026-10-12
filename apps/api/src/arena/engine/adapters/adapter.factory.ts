@@ -27,6 +27,8 @@ export interface AdapterTargetLike {
 export interface AdapterFactoryOptions {
   requestsPerSecond?: number;
   clock?: AdapterClock;
+  /** Kill switch for the browser (widget): true = stop now. Checked for every browser request and while waiting. */
+  shouldAbort?: () => Promise<boolean>;
 }
 
 @Injectable()
@@ -49,7 +51,7 @@ export class AdapterFactory {
     const [resolved] = await this.guard.resolveSafe(host);
     return this.widgets.create(
       { widgetConfig: aiTarget.widgetConfig },
-      { pinned: { host, ip: resolved.address }, requestsPerSecond: options.requestsPerSecond, clock: options.clock },
+      { pinned: { host, ip: resolved.address }, requestsPerSecond: options.requestsPerSecond, clock: options.clock, shouldAbort: options.shouldAbort },
     );
   }
 

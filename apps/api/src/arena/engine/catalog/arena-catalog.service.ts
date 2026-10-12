@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { Prisma } from '@ptaas/db';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { containsForbiddenContent } from './forbidden-content';
 import { ARENA_GOAL_CATALOG, CatalogGoal } from './goals.data';
 
 @Injectable()
@@ -20,7 +21,14 @@ export class ArenaCatalogService implements OnModuleInit {
 
   /** Idempotent: upserts every catalog goal by key. */
   async seed(goals: CatalogGoal[] = ARENA_GOAL_CATALOG): Promise<number> {
+    let seeded = 0;
     for (const g of goals) {
+      // Defence in depth: a seed that trips the harmless-scope guard is never written to the catalog.
+      const text = [g.title, g.description, ...g.seedAttacks, JSON.stringify(g.successCriteria)].join(' ');
+      if (containsForbiddenContent(text)) {
+        this.log.error(`Catalog goal ${g.key} rejected by the content guard and skipped`);
+        continue;
+      }
       const data = {
         version: g.version,
         category: g.category,
@@ -35,7 +43,8 @@ export class ArenaCatalogService implements OnModuleInit {
         active: true,
       };
       await this.prisma.arenaGoal.upsert({ where: { key: g.key }, create: { key: g.key, ...data }, update: data });
+      seeded++;
     }
-    return goals.length;
+    return seeded;
   }
 }

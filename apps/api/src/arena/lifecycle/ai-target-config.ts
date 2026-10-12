@@ -75,6 +75,8 @@ export interface KindConfigInput {
   ragConfig?: unknown;
   agentConfig?: unknown;
   widgetConfig?: unknown;
+  /** Auth header of the chat endpoint; the dry-run header must differ from it. */
+  authHeaderName?: string | null;
 }
 
 export interface KindConfigResult {
@@ -155,7 +157,12 @@ export async function validateKindConfig(
     if (Boolean(cfg.dryRunHeaderName) !== Boolean(cfg.dryRunHeaderValue)) {
       throw new BadRequestException('dryRunHeaderName and dryRunHeaderValue must be set together');
     }
-    if (cfg.dryRunHeaderName) assertHeaderName(cfg.dryRunHeaderName);
+    if (cfg.dryRunHeaderName) {
+      assertHeaderName(cfg.dryRunHeaderName);
+      if (input.authHeaderName && cfg.dryRunHeaderName.toLowerCase() === input.authHeaderName.trim().toLowerCase()) {
+        throw new BadRequestException('dryRunHeaderName must differ from authHeaderName');
+      }
+    }
     if (!cfg.dryRunHeaderName) out.warnings.push('No dry-run header configured: rely on a sandboxed staging environment.');
     out.agentConfig = cfg;
   }

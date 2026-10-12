@@ -21,6 +21,8 @@ import { JudgeService } from './judge/judge.service';
 import { computeSeverity } from './judge/severity';
 import { RecommendationService, CategoryStats } from './recommendation.service';
 import { RagConfig, parseRagConfig } from './rag/rag-config';
+import { RagArtifactDoc, hasProgress, toArtifactDoc } from './rag/rag-artifacts';
+import { RagCleanupService, deleteErrorCode } from './rag/rag-cleanup.service';
 import { RagDoc, RagHttpContext, RagOperationError, RagPlanter } from './rag/rag-planter';
 import { redactAttempt, redactText } from './redact-attempt';
 import { buildTokens } from './red/attempt-tokens';
@@ -37,7 +39,13 @@ export interface ArenaCounterRedis {
   expire(key: string, seconds: number): Promise<unknown>;
   ttl(key: string): Promise<number>;
   del(...keys: string[]): Promise<unknown>;
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, mode: 'EX', seconds: number, flag: 'NX'): Promise<string | null>;
 }
+
+/** Per-run worker marker: tells a redelivered job whether a live worker still owns the run. */
+const WORKER_KEY = (runId: string): string => `arena:run-worker:${runId}`;
+const WORKER_TTL_SECONDS = 120;
 
 type RunWithTarget = Prisma.ArenaRunGetPayload<{ include: { aiTarget: { include: { target: true } } } }>;
 
@@ -85,7 +93,7 @@ interface RagState {
 }
 
 interface RunArtifacts {
-  rag?: { docs: Array<{ docId: string; plantedAt: string; deletedAt?: string; deleteError?: string }> };
+  rag?: { docs: RagArtifactDoc[] };
   agent?: { toolCallsObserved: number };
 }
 
@@ -112,6 +120,7 @@ export class ArenaOrchestratorService {
     private readonly audit: AuditService,
     @Inject(ARENA_COUNTER_REDIS) private readonly redis: ArenaCounterRedis,
     private readonly planter: RagPlanter,
+    private readonly ragCleanup: RagCleanupService,
     @Optional() @Inject(LLM_CLIENT) private readonly llm?: LlmClient,
   ) {}
 
@@ -129,6 +138,26 @@ export class ArenaOrchestratorService {
     // Only runs that were approved and started by the lifecycle service may execute.
     if (run.status !== 'RUNNING') {
       this.log.warn(`run ${runId} is ${run.status}, not RUNNING — job ignored`);
+      return;
+    }
+
+    // BullMQ may redeliver a job after a worker crash. A run that already made progress is NEVER restarted
+    // (that would plant documents a second time): a live owner keeps it, otherwise it is cleaned up and failed.
+    const workerKey = WORKER_KEY(run.id);
+    const progressed =
+      hasProgress(run.artifacts) ||
+      run.usedRequests > 0 ||
+      (await this.prisma.arenaAttempt.count({ where: { runId: run.id, organizationId } })) > 0;
+    if (progressed) {
+      if (await this.redis.get(workerKey)) {
+        this.log.warn(`run ${runId} is owned by a live worker — redelivered job ignored`);
+        return;
+      }
+      await this.abandonInterrupted(run);
+      return;
+    }
+    if ((await this.redis.set(workerKey, '1', 'EX', WORKER_TTL_SECONDS, 'NX')) !== 'OK') {
+      this.log.warn(`run ${runId} is already being executed — duplicate job ignored`);
       return;
     }
 
@@ -163,7 +192,7 @@ export class ArenaOrchestratorService {
     } finally {
       // Release the per-target lock (set by ArenaRunsService.start) no matter how the run ended.
       try {
-        await this.redis.del(arenaRedisKeys.targetLock(run.aiTargetId));
+        await this.redis.del(arenaRedisKeys.targetLock(run.aiTargetId), workerKey);
       } catch (err) {
         this.log.error(`could not release target lock: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -209,6 +238,8 @@ export class ArenaOrchestratorService {
     state.adapter = await this.adapters.create(run.aiTarget, { apiKey: secrets.apiKey }, {
       requestsPerSecond: run.requestsPerSecond,
       clock: this.adapterClock,
+      // The browser checks the kill switch itself (every request, every wait), not only between our rounds.
+      shouldAbort: () => this.killSwitch.isKilled(run.id, orgId),
     });
     if (state.rag) {
       state.rag.ctx.headers = buildAuthHeaders(run.aiTarget.authHeaderName, secrets.apiKey, 'Authorization', true);
@@ -259,6 +290,47 @@ export class ArenaOrchestratorService {
     const rows = await this.prisma.arenaGoal.findMany({ where: { id: { in: ids }, active: true } });
     const byId = new Map(rows.map((g) => [g.id, g]));
     return ids.map((id) => byId.get(id)).filter((g): g is NonNullable<typeof g> => !!g);
+  }
+
+  /** Redelivered job for a run that already made progress and has no live worker: clean up and fail it, never restart. */
+  private async abandonInterrupted(run: RunWithTarget): Promise<void> {
+    const orgId = run.organizationId;
+    this.log.warn(`run ${run.id} was interrupted (redelivered job, no live worker) — cleaning up and failing it`);
+    try {
+      await this.ragCleanup.cleanupRun(run.id, orgId);
+    } catch (err) {
+      this.log.error(`cleanup of interrupted run failed: ${deleteErrorCode(err)}`);
+    }
+    const now = new Date(this.now());
+    const upd = await this.prisma.arenaRun.updateMany({
+      where: { id: run.id, organizationId: orgId, status: 'RUNNING' },
+      data: { status: 'FAILED', abortedReason: 'interrupted', completedAt: now },
+    });
+    if (upd.count > 0) {
+      await this.prisma.scan.updateMany({
+        where: { id: run.scanId, organizationId: orgId },
+        data: { status: 'FAILED', completedAt: now, currentActivity: null, errorMessage: 'AI Arena run failed: interrupted' },
+      });
+      try {
+        await this.audit.logStrict({
+          action: 'arena.run.failed',
+          userId: run.createdById,
+          organizationId: orgId,
+          resource: 'arena_run',
+          resourceId: run.id,
+          metadata: { reason: 'interrupted' },
+        });
+      } catch (err) {
+        this.log.error(`audit write failed for interrupted run: ${deleteErrorCode(err)}`);
+      }
+      await this.events.publish(orgId, run.id, { type: 'run.status', status: 'FAILED', reason: 'interrupted' });
+      await this.events.publish(orgId, run.id, { type: 'done', status: 'FAILED' });
+    }
+    try {
+      await this.redis.del(arenaRedisKeys.targetLock(run.aiTargetId));
+    } catch (err) {
+      this.log.error(`could not release target lock: ${deleteErrorCode(err)}`);
+    }
   }
 
   // ---- kinds: runtime preconditions, RAG, cleanup -----------------------------------------------
@@ -322,9 +394,16 @@ export class ArenaOrchestratorService {
       if (!criteria || !seeds) continue;
       await this.guard(state);
       const doc = this.planter.buildDocument(goal, seeds[0], criteria, state.run.id, index++);
-      rag.cleanup.push(doc); // registered BEFORE the request: even a half-failed ingest is cleaned up
+      doc.plannedAt = new Date(this.now());
+      rag.cleanup.push(doc);
+      // The intent (nonce, topic marker, time, status `planned`) is persisted BEFORE the request: if the worker dies
+      // during or after the ingest, the reaper still knows what to look for and remove.
+      this.syncRagArtifacts(state);
+      await this.flushUsage(state);
       try {
-        doc.docId = await this.planter.ingest(rag.ctx, rag.config, doc);
+        const ing = await this.planter.ingest(rag.ctx, rag.config, doc);
+        doc.docId = ing.docId;
+        doc.docIdSource = ing.source;
         doc.plantedAt = new Date(this.now());
         rag.docs.set(goal.id, doc);
         this.syncRagArtifacts(state);
@@ -332,6 +411,12 @@ export class ArenaOrchestratorService {
       } catch (err) {
         if (!(err instanceof RagOperationError)) throw err;
         this.log.warn(`RAG document for ${goal.key} could not be planted (${err.code})`);
+        // A definite rejection (HTTP 4xx) means nothing was planted; anything else (5xx, timeout) is ambiguous: keep it for cleanup.
+        if (/^http_4\d\d$/.test(err.code)) {
+          rag.cleanup = rag.cleanup.filter((d) => d !== doc);
+          this.syncRagArtifacts(state);
+          await this.flushUsage(state);
+        }
       }
     }
     if (rag.docs.size > 0) await this.planter.waitForIndexing(rag.config.indexingDelayMs, () => this.guard(state));
@@ -372,16 +457,7 @@ export class ArenaOrchestratorService {
   private syncRagArtifacts(state: RunState): void {
     const rag = state.rag;
     if (!rag) return;
-    state.artifacts.rag = {
-      docs: rag.cleanup
-        .filter((d) => d.plantedAt)
-        .map((d) => ({
-          docId: d.docId,
-          plantedAt: (d.plantedAt as Date).toISOString(),
-          ...(d.deletedAt ? { deletedAt: d.deletedAt.toISOString() } : {}),
-          ...(d.deleteError ? { deleteError: d.deleteError } : {}),
-        })),
-    };
+    state.artifacts.rag = { docs: rag.cleanup.map((d) => toArtifactDoc(d)) };
   }
 
   /** Counts a request without enforcing limits: cleanup must run even after a kill or budget stop. */
@@ -394,7 +470,12 @@ export class ArenaOrchestratorService {
     };
   }
 
-  /** Removes the planted test documents (always: also after abort/kill/failure). Never logs document content. */
+  /**
+   * Removes the planted test documents. DELIBERATE EXCEPTION to "check the kill switch before every request":
+   * this runs after abort/kill/budget stops too, because leaving test documents (with a hidden instruction) in a
+   * customer's index is worse than a few extra delete requests. It only counts requests, it does not enforce limits.
+   * Never logs document content.
+   */
   private async cleanupRag(state: RunState): Promise<void> {
     const rag = state.rag;
     if (!rag || rag.cleanup.length === 0) return;
@@ -404,7 +485,7 @@ export class ArenaOrchestratorService {
         await this.planter.remove(ctx, rag.config, doc);
         doc.deletedAt = new Date(this.now());
       } catch (err) {
-        doc.deleteError = err instanceof RagOperationError ? err.code : err instanceof TargetUnsafeError ? 'unsafe_url' : 'error';
+        doc.deleteError = deleteErrorCode(err);
       }
     }
     this.syncRagArtifacts(state);
@@ -417,11 +498,12 @@ export class ArenaOrchestratorService {
     const failed = rag.cleanup.filter((d) => d.deleteError);
     if (failed.length === 0) return;
     const docIds = failed.map((d) => d.docId);
+    const topics = failed.map((d) => d.topic);
     // Created in finalize(), after the per-category recommendations.
     state.warnings.push({
       category: 'INDIRECT_INJECTION',
       title: 'Testdokumente konnten nicht entfernt werden',
-      text: `PTaaS konnte ${failed.length} eingespielte Testdokument(e) nicht automatisch loeschen. Bitte entferne sie manuell aus dem Index: ${docIds.join(', ')}. Die Dokumente sind harmlos, enthalten aber eine versteckte Marker-Anweisung und koennen weiterhin Antworten beeinflussen.`,
+      text: `PTaaS konnte ${failed.length} eingespielte Testdokument(e) nicht automatisch loeschen. Bitte suche im Index nach den Markern ${topics.join(', ')} (Dokument-IDs: ${docIds.join(', ')}) und entferne sie manuell. Die Dokumente sind harmlos, enthalten aber eine versteckte Marker-Anweisung und koennen weiterhin Antworten beeinflussen.`,
       priority: 1,
     });
     try {
@@ -432,7 +514,7 @@ export class ArenaOrchestratorService {
         resource: 'arena_run',
         resourceId: state.run.id,
         // Document ids and error codes only — never document content.
-        metadata: { count: failed.length, docIds, errors: failed.map((d) => d.deleteError) },
+        metadata: { count: failed.length, topics, docIds, errors: failed.map((d) => d.deleteError) },
       });
     } catch (err) {
       this.log.error(`audit write failed for RAG cleanup: ${err instanceof Error ? err.message : String(err)}`);
@@ -453,6 +535,7 @@ export class ArenaOrchestratorService {
   private async guard(state: RunState): Promise<void> {
     const { run } = state;
     if (await this.killSwitch.isKilled(run.id, run.organizationId)) throw new RunStopError('kill_switch');
+    await this.redis.expire(WORKER_KEY(run.id), WORKER_TTL_SECONDS); // heartbeat: this worker still owns the run
     const now = this.now();
     if (now - state.startedAtMs > MAX_RUN_WALLCLOCK_MS) throw new RunStopError('wallclock_exceeded');
     if (run.windowStart && now < run.windowStart.getTime()) throw new RunStopError('window_not_open');
@@ -619,7 +702,9 @@ export class ArenaOrchestratorService {
 
       let repro = { k: 1, n: 1 };
       if (res && verdict.verdict === 'BREACH' && verdict.needsRepro) {
-        const r = await this.reproduce(state, adapter, hook, judgeInput, plan.prompt);
+        const r = await this.reproduce(state, adapter, hook, judgeInput, plan.prompt, (x) =>
+          state.kind === 'AGENT' ? { toolCalls: extractToolCalls(x.raw, state.agent?.toolCallsPath) } : {},
+        );
         repro = { k: r.k, n: r.n };
         attemptTokens += r.tokens;
         if (r.k < 2) {
@@ -697,8 +782,9 @@ export class ArenaOrchestratorService {
     state: RunState,
     adapter: ArenaTargetAdapter,
     hook: () => Promise<void>,
-    judgeInput: { goal: { title: string; description: string }; criteria: Parameters<JudgeService['judge']>[0]['criteria']; attackText: string; tokens: Parameters<JudgeService['judge']>[0]['tokens']; fragments: string[] },
+    judgeInput: { goal: { title: string; description: string }; criteria: Parameters<JudgeService['judge']>[0]['criteria']; attackText: string; tokens: Parameters<JudgeService['judge']>[0]['tokens']; fragments: string[]; toolTraceAvailable?: boolean },
     prompt: string,
+    extra: (res: AdapterResponse) => { toolCalls?: ObservedToolCall[] } = () => ({}),
   ): Promise<{ k: number; n: number; tokens: number }> {
     let k = 1;
     let n = 1;
@@ -708,7 +794,7 @@ export class ArenaOrchestratorService {
       try {
         const res = await adapter.send(prompt, { beforeRequest: hook });
         tokens += estimateTokens(prompt) + estimateTokens(res.text);
-        const v = await this.judge.judge({ ...judgeInput, responseText: res.text });
+        const v = await this.judge.judge({ ...judgeInput, ...extra(res), responseText: res.text });
         tokens += v.tokens;
         if (v.verdict === 'BREACH') k++;
       } catch (err) {

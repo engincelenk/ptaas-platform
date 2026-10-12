@@ -9,6 +9,8 @@
  *       pinned: PinnedHost;                    // REQUIRED: { host, ip } from SsrfGuardService.resolveSafe
  *       requestsPerSecond?: number;            // capped to ARENA_LIMITS.maxRequestsPerSecond
  *       clock?: AdapterClock;
+ *       shouldAbort?: () => Promise<boolean>;  // kill-switch, e.g. () => killSwitch.isKilled(runId); true = stop the browser now
+ *       sessionOptions?: { maxRequests?: number; sessionTimeoutMs?: number };
  *     },
  *   ): WidgetAdapter                           // implements ArenaTargetAdapter, plus close(): Promise<void>
  *
@@ -22,6 +24,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ARENA_LIMITS } from '../../arena.constants';
 import type { AdapterClock } from '../adapters/adapter.types';
+import type { WidgetSessionOptions } from './widget-session-options';
 import { parseWidgetConfig } from './widget-config';
 import { WidgetAdapter } from './widget.adapter';
 import { BROWSER_DRIVER } from './widget.types';
@@ -31,6 +34,8 @@ export interface WidgetAdapterFactoryOptions {
   pinned: PinnedHost;
   requestsPerSecond?: number;
   clock?: AdapterClock;
+  shouldAbort?: () => Promise<boolean>;
+  sessionOptions?: Omit<WidgetSessionOptions, 'shouldAbort'>;
 }
 
 @Injectable()
@@ -42,6 +47,8 @@ export class WidgetAdapterFactory {
     return new WidgetAdapter(this.driver, config, options.pinned, {
       requestsPerSecond: Math.min(options.requestsPerSecond ?? 1, ARENA_LIMITS.maxRequestsPerSecond),
       clock: options.clock,
+      shouldAbort: options.shouldAbort,
+      sessionOptions: options.sessionOptions,
     });
   }
 }

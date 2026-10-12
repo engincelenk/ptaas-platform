@@ -4,6 +4,12 @@ import {
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScansService } from '../scans/scans.service';
+import type { ScanTypeValue } from '../scans/scan-queue.constants';
+
+/** Max. neue Scans pro Cron-Tick (Backlog-Drosselung). */
+export const MAX_SCHEDULED_SCANS_PER_TICK = 5;
+/** Verifikation älter als dies => nur Warnung (keine Erzwingung). */
+const VERIFICATION_STALE_MS = 30 * 24 * 3600 * 1000;
 
 const SCAN_TYPES = ['QUICK', 'FULL', 'AUTHENTICATED'] as const;
 
@@ -151,28 +157,56 @@ export class ScanSchedulesService {
   @Cron(CronExpression.EVERY_MINUTE)
   async runDueSchedules() {
     const now = new Date();
+    // Älteste zuerst; Überschuss wird im nächsten Tick abgearbeitet.
     const due = await this.prisma.scanSchedule.findMany({
       where: { isActive: true, nextRunAt: { lte: now } },
+      orderBy: { nextRunAt: 'asc' },
+      take: MAX_SCHEDULED_SCANS_PER_TICK * 4,
     });
 
+    let started = 0;
     for (const sched of due) {
+      if (started >= MAX_SCHEDULED_SCANS_PER_TICK) break;
       try {
-        await this.scans.create(
-          { targetId: sched.targetId, type: sched.scanType as any, policyId: sched.policyId ?? undefined },
-          sched.createdById,
-          sched.organizationId,
-        );
-        const nextRunAt = computeNextRun(sched.cronExpr);
-        await this.prisma.scanSchedule.update({
-          where: { id: sched.id },
-          data:  { lastRunAt: now, nextRunAt },
+        // Atomarer Claim: nur eine Instanz kann nextRunAt von altem auf neuen Wert setzen.
+        // nextRunAt wird ab "jetzt" berechnet => überfällige Schedules feuern nur einmal.
+        const claim = await this.prisma.scanSchedule.updateMany({
+          where: { id: sched.id, isActive: true, nextRunAt: sched.nextRunAt },
+          data:  { lastRunAt: now, nextRunAt: computeNextRun(sched.cronExpr) },
         });
-        this.logger.log(`Scheduled scan triggered: schedule=${sched.id} target=${sched.targetId}`);
-      } catch (err: any) {
-        this.logger.warn(`Scheduled scan failed: schedule=${sched.id} error=${err?.message}`);
-        // Bump nextRunAt by 1h to avoid tight retry storm
-        const nextRunAt = new Date(Date.now() + 3600000);
-        await this.prisma.scanSchedule.update({ where: { id: sched.id }, data: { nextRunAt } });
+        if (claim.count !== 1) continue; // andere Instanz war schneller
+        started++;
+
+        try {
+          const target = await this.prisma.target.findFirst({
+            where: { id: sched.targetId, organizationId: sched.organizationId },
+            select: { verificationStatus: true, lastVerifiedAt: true, verifiedAt: true },
+          });
+          if (!target || target.verificationStatus !== 'VERIFIED') {
+            this.logger.warn(`Scheduled scan skipped (target not verified): schedule=${sched.id}`);
+            continue;
+          }
+          const verifiedAt = target.lastVerifiedAt ?? target.verifiedAt;
+          if (verifiedAt && now.getTime() - verifiedAt.getTime() > VERIFICATION_STALE_MS) {
+            this.logger.warn(`Target verification older than 30 days: schedule=${sched.id} target=${sched.targetId}`);
+          }
+
+          await this.scans.create(
+            { targetId: sched.targetId, type: sched.scanType as ScanTypeValue, policyId: sched.policyId ?? undefined },
+            sched.createdById,
+            sched.organizationId,
+          );
+          this.logger.log(`Scheduled scan triggered: schedule=${sched.id} target=${sched.targetId}`);
+        } catch (err: unknown) {
+          this.logger.warn(`Scheduled scan failed: schedule=${sched.id} error=${errName(err)}`);
+          // Bump nextRunAt by 1h to avoid tight retry storm
+          await this.prisma.scanSchedule.update({
+            where: { id: sched.id },
+            data:  { nextRunAt: new Date(Date.now() + 3600000) },
+          });
+        }
+      } catch (err: unknown) {
+        this.logger.warn(`Scheduled scan handling failed: schedule=${sched.id} error=${errName(err)}`);
       }
     }
   }
@@ -182,4 +216,8 @@ export class ScanSchedulesService {
     if (!p) throw new NotFoundException('Project not found');
     return p;
   }
+}
+
+function errName(err: unknown): string {
+  return err instanceof Error ? err.name : 'UnknownError';
 }

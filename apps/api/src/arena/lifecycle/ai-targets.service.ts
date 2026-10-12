@@ -117,7 +117,7 @@ export class AiTargetsService {
     const kind: ArenaTargetKindName = dto.kind ?? 'CHAT';
     const environment: ArenaEnvironmentName = dto.environment ?? (kind === 'AGENT' ? 'STAGING' : 'PRODUCTION');
     const kindCfg = await validateKindConfig(
-      { kind, adapter: dto.adapter, environment, ragConfig: dto.ragConfig, agentConfig: dto.agentConfig, widgetConfig: dto.widgetConfig },
+      { kind, adapter: dto.adapter, environment, authHeaderName: dto.authHeaderName, ragConfig: dto.ragConfig, agentConfig: dto.agentConfig, widgetConfig: dto.widgetConfig },
       url.hostname,
       (h) => this.ssrfGuard.resolveSafe(h),
     );
@@ -235,13 +235,14 @@ export class AiTargetsService {
     }
 
     const provided = (...fields: (keyof UpdateAiTargetDto)[]): boolean => fields.some((f) => dto[f] !== undefined);
-    if (provided('kind', 'environment', 'adapter', 'ragConfig', 'agentConfig', 'widgetConfig', 'endpointUrl')) {
+    if (provided('kind', 'environment', 'adapter', 'ragConfig', 'agentConfig', 'widgetConfig', 'endpointUrl', 'authHeaderName')) {
       const kind = (dto.kind ?? current.kind) as ArenaTargetKindName;
       const kindCfg = await validateKindConfig(
         {
           kind,
           adapter: (dto.adapter ?? current.adapter) as CreateAiTargetDto['adapter'],
           environment: (dto.environment ?? current.environment) as ArenaEnvironmentName,
+          authHeaderName: dto.authHeaderName ?? current.authHeaderName,
           ragConfig: dto.ragConfig ?? (kind === 'RAG' ? current.ragConfig : null),
           agentConfig: dto.agentConfig ?? (kind === 'AGENT' ? current.agentConfig : null),
           widgetConfig: dto.widgetConfig ?? (kind === 'WIDGET' ? current.widgetConfig : null),
@@ -347,6 +348,13 @@ export class AiTargetsService {
   /**
    * Customer attestations (documents placed / staging / sandboxed tools). The timestamp is set first,
    * then the audit record is written; a failing audit write rolls the attestation back.
+   *
+   * Compare-and-set: the write only succeeds if the row is still the one that was validated
+   * (same updatedAt, same kind, AGENT still STAGING); a concurrent PATCH makes it fail with
+   * 409 CONFIG_CHANGED and nothing is set. The rollback is conditional in the same way.
+   *
+   * Role note (deliberate): SECURITY_ENGINEER may attest (operator action), but the run approval
+   * stays ADMIN-only, so an attestation alone never starts a test.
    */
   async attest(id: string, dto: AttestTargetDto, actor: ArenaActor, meta: RequestMeta = {}): Promise<AiTargetView> {
     const org = actor.organizationId;
@@ -379,7 +387,25 @@ export class AiTargetsService {
       data.sandboxAttestedAt = now;
       previous.sandboxAttestedAt = row.sandboxAttestedAt;
     }
-    const updated = await this.prisma.aiTarget.update({ where: { id }, data, include: { target: true } });
+    const stamp = new Date(); // explicit updatedAt: identifies our own write for the conditional rollback
+    const cas = await this.prisma.aiTarget.updateMany({
+      where: {
+        id,
+        organizationId: org,
+        updatedAt: row.updatedAt,
+        kind: row.kind,
+        ...(row.kind === 'AGENT' ? { environment: 'STAGING' as const } : {}),
+      },
+      data: { ...data, updatedAt: stamp },
+    });
+    if (cas.count === 0) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: 'CONFIG_CHANGED',
+        message: 'The target configuration changed meanwhile — reload and try again',
+      });
+    }
     try {
       await this.audit.logStrict({
         action: 'arena.target.attested',
@@ -392,7 +418,10 @@ export class AiTargetsService {
         userAgent: meta.userAgent,
       });
     } catch {
-      await this.prisma.aiTarget.update({ where: { id }, data: previous });
+      await this.prisma.aiTarget.updateMany({
+        where: { id, organizationId: org, updatedAt: stamp },
+        data: previous as Prisma.AiTargetUncheckedUpdateManyInput,
+      });
       throw new ConflictException({
         statusCode: 409,
         error: 'Conflict',
@@ -400,7 +429,7 @@ export class AiTargetsService {
         message: 'The audit record could not be written — the attestation was not saved',
       });
     }
-    return this.toView(updated);
+    return this.toView(await this.load(id, org));
   }
 
   // ── Verification ─────────────────────────────────────

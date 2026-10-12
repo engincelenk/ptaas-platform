@@ -1,9 +1,12 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@ptaas/db';
 import { AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ARENA_LIMITS, arenaRedisKeys } from '../arena.constants';
 import { ArenaEventsService } from '../arena-events.service';
 import { MAX_RUN_WALLCLOCK_MS } from './engine.types';
+import { isOpenDoc, readRagDocs } from './rag/rag-artifacts';
+import { RagCleanupService } from './rag/rag-cleanup.service';
 
 export const RETENTION_REDIS = 'REDIS_CLIENT';
 export const RETENTION_PLACEHOLDER = '[expired — retention]';
@@ -23,10 +26,13 @@ export interface RetentionResult {
   attemptsDeleted: number;
   contactsCleared: number;
   runsReaped: number;
+  ragRunsCleaned: number;
 }
 
 /**
- * Self-contained housekeeping (no @nestjs/schedule — ScheduleModule is not registered in this app):
+ * Self-contained housekeeping. ScheduleModule is active in this app, but this timer is deliberately independent of it:
+ * it must not depend on a cron decorator being wired and it uses its own Redis lock so several instances never overlap.
+ * Duties:
  *  - retention: expired attempts are deleted, evidence copied into findings is scrubbed, emergency contacts are cleared,
  *  - reaper: runs stuck in RUNNING (worker crash) are failed and their target lock released.
  * A Redis SET NX EX lock keeps multiple API instances from running it at the same time.
@@ -40,6 +46,7 @@ export class ArenaRetentionService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly events: ArenaEventsService,
     private readonly audit: AuditService,
+    private readonly ragCleanup: RagCleanupService,
     @Inject(RETENTION_REDIS) private readonly redis: RetentionRedis,
   ) {}
 
@@ -66,7 +73,7 @@ export class ArenaRetentionService implements OnModuleInit, OnModuleDestroy {
   }
 
   async runOnce(now: Date = new Date()): Promise<RetentionResult> {
-    const result: RetentionResult = { findingsScrubbed: 0, attemptsDeleted: 0, contactsCleared: 0, runsReaped: 0 };
+    const result: RetentionResult = { findingsScrubbed: 0, attemptsDeleted: 0, contactsCleared: 0, runsReaped: 0, ragRunsCleaned: 0 };
 
     // (a) scrub evidence in findings that originate from expired attempts
     const withFinding = await this.prisma.arenaAttempt.findMany({
@@ -117,7 +124,32 @@ export class ArenaRetentionService implements OnModuleInit, OnModuleDestroy {
 
     // Reaper: RUNNING runs far beyond the maximum wallclock are dead.
     result.runsReaped = await this.reap(now);
+    result.ragRunsCleaned = await this.sweepRagDocs(now);
     return result;
+  }
+
+  /**
+   * Planted RAG test documents of runs that are no longer running (crashed worker, redelivery, failed cleanup):
+   * delete them after the fact, or report them by topic marker if that is not possible.
+   */
+  private async sweepRagDocs(now: Date): Promise<number> {
+    const since = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+    const runs = await this.prisma.arenaRun.findMany({
+      where: { status: { in: ['COMPLETED', 'ABORTED', 'FAILED'] }, completedAt: { gte: since }, artifacts: { not: Prisma.DbNull } },
+      select: { id: true, organizationId: true, artifacts: true },
+      take: 100,
+    });
+    let cleaned = 0;
+    for (const r of runs) {
+      if (!readRagDocs(r.artifacts).some(isOpenDoc)) continue;
+      try {
+        await this.ragCleanup.cleanupRun(r.id, r.organizationId);
+        cleaned++;
+      } catch (err) {
+        this.log.error(`RAG cleanup sweep failed for a run: ${err instanceof Error ? err.name : 'error'}`);
+      }
+    }
+    return cleaned;
   }
 
   private async reap(now: Date): Promise<number> {
@@ -134,6 +166,12 @@ export class ArenaRetentionService implements OnModuleInit, OnModuleDestroy {
       });
       if (upd.count === 0) continue; // finished meanwhile
       reaped++;
+      try {
+        // A dead worker cannot clean up after itself: remove planted RAG test documents now.
+        await this.ragCleanup.cleanupRun(run.id, run.organizationId);
+      } catch (err) {
+        this.log.error(`RAG cleanup of a stalled run failed: ${err instanceof Error ? err.name : 'error'}`);
+      }
       await this.prisma.scan.updateMany({
         where: { id: run.scanId, organizationId: run.organizationId },
         data: { status: 'FAILED', completedAt: now, currentActivity: null, errorMessage: 'AI Arena run failed: stalled' },

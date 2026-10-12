@@ -13,6 +13,7 @@ import { ArenaOrchestratorService } from './arena-orchestrator.service';
 import { ARENA_GOAL_CATALOG } from './catalog/goals.data';
 import { FindingsBridgeService } from './findings-bridge.service';
 import { JudgeService } from './judge/judge.service';
+import type { RagCleanupService } from './rag/rag-cleanup.service';
 import { RagPlanter } from './rag/rag-planter';
 import { RecommendationService } from './recommendation.service';
 import type { JudgeUnclearResult, LlmClient } from './red/llm-client';
@@ -42,6 +43,10 @@ interface HarnessOpts {
   secrets?: { apiKey?: string; knownPromptFragments?: string[] };
   adapterThrows?: Error;
   ttl?: number;
+  /** Value of the per-run worker marker in Redis (a live worker owns the run). */
+  workerHeld?: string;
+  /** Existing attempts in the DB before execute() starts (redelivery tests). */
+  existingAttempts?: number;
   /** Extra/overriding fields of the AiTarget (kind, environment, ragConfig, ...). */
   aiTarget?: Row;
   /** Full-control reply (text + raw JSON for tool-call traces). */
@@ -114,6 +119,7 @@ function harness(opts: HarnessOpts = {}) {
     },
     arenaGoal: { findMany: vi.fn(async () => goals) },
     arenaAttempt: {
+      count: vi.fn(async () => opts.existingAttempts ?? attempts.length),
       create: vi.fn(async (a: { data: Row }) => {
         const row = { id: `att-${attempts.length + 1}`, findingId: null, createdAt: new Date(), ...a.data };
         attempts.push(row);
@@ -182,6 +188,8 @@ function harness(opts: HarnessOpts = {}) {
     expire: vi.fn(async () => 1),
     ttl: vi.fn(async () => opts.ttl ?? 100),
     del: vi.fn(async () => 1),
+    get: vi.fn(async (_k: string) => opts.workerHeld ?? null),
+    set: vi.fn(async () => 'OK'),
   };
 
   const adapter: ArenaTargetAdapter = {
@@ -216,13 +224,15 @@ function harness(opts: HarnessOpts = {}) {
   const planter = new RagPlanter({ request: ragRequest } as never);
   planter.sleep = async () => undefined;
 
+  const ragCleanup = { cleanupRun: vi.fn(async () => ({ open: 0, deleted: 0, failed: 0 })) } as unknown as RagCleanupService;
+
   const judge = new JudgeService(opts.llm);
   const red = new RedAgent(opts.llm);
   const bridge = new FindingsBridgeService(prisma, eventsSvc);
   const recommendations = new RecommendationService(prisma, eventsSvc, opts.llm);
-  const orch = new ArenaOrchestratorService(prisma, eventsSvc, kill, scoreboard, aiTargets, adapters, judge, red, bridge, recommendations, audit, redis, planter, opts.llm);
+  const orch = new ArenaOrchestratorService(prisma, eventsSvc, kill, scoreboard, aiTargets, adapters, judge, red, bridge, recommendations, audit, redis, planter, ragCleanup, opts.llm);
 
-  return { orch, kill, ragCalls, ragRequest, run, attempts, findings, recs, events, audits, sent, wheres, runUpdates, scanUpdates, adapters, adapter, aiTargets, scoreboard, redis, prisma };
+  return { orch, kill, ragCleanup, ragCalls, ragRequest, run, attempts, findings, recs, events, audits, sent, wheres, runUpdates, scanUpdates, adapters, adapter, aiTargets, scoreboard, redis, prisma };
 }
 
 const token = (p: string) => /PTAAS-[A-Z]+-[0-9a-f]{10}/.exec(p)?.[0] ?? 'none';
@@ -571,23 +581,24 @@ describe('ArenaOrchestrator — security review additions', () => {
   it('always repairs a missing TTL on the daily counter (not only on the first increment)', async () => {
     const h = harness({ ttl: -1, dailyCounter: 10 });
     await h.orch.execute(job);
-    expect(h.redis.expire).toHaveBeenCalledTimes(h.sent.length);
+    const dailyExpires = (r: typeof h.redis) => r.expire.mock.calls.filter((c) => String((c as unknown[])[0]).startsWith('arena:daily:')).length;
+    expect(dailyExpires(h.redis)).toBe(h.sent.length);
     const h2 = harness({ ttl: 500 });
     await h2.orch.execute(job);
-    expect(h2.redis.expire).not.toHaveBeenCalled();
+    expect(dailyExpires(h2.redis)).toBe(0);
   });
 
   it('releases the target lock when the run ends (completed, aborted, failed), but not for ignored jobs', async () => {
     const lock = 'arena:target-lock:ait-1';
     const done = harness();
     await done.orch.execute(job);
-    expect(done.redis.del).toHaveBeenCalledWith(lock);
+    expect(done.redis.del).toHaveBeenCalledWith(lock, 'arena:run-worker:run-1');
     const aborted = harness({ killed: () => true });
     await aborted.orch.execute(job);
-    expect(aborted.redis.del).toHaveBeenCalledWith(lock);
+    expect(aborted.redis.del).toHaveBeenCalledWith(lock, 'arena:run-worker:run-1');
     const failed = harness({ adapterThrows: new TargetUnsafeError('x') });
     await failed.orch.execute(job);
-    expect(failed.redis.del).toHaveBeenCalledWith(lock);
+    expect(failed.redis.del).toHaveBeenCalledWith(lock, 'arena:run-worker:run-1');
     const ignored = harness({ run: { status: 'DRAFT' } });
     await ignored.orch.execute(job);
     expect(ignored.redis.del).not.toHaveBeenCalled();
@@ -699,7 +710,9 @@ describe('ArenaOrchestrator — stage 2 (RAG)', () => {
     for (const d of docs) {
       expect(d.deletedAt).toBeDefined();
       expect(d.deleteError).toBeUndefined();
-      expect(Object.keys(d).sort()).toEqual(['deletedAt', 'docId', 'plantedAt']); // no content/secrets
+      expect(d.status).toBe('deleted');
+      expect(Object.keys(d).sort()).toEqual(['deletedAt', 'docId', 'docIdSource', 'nonce', 'plannedAt', 'plantedAt', 'status', 'topic']); // ids/markers only, no content/secrets
+      expect(JSON.stringify(d)).not.toMatch(/watering|coffee|tyre|library|houseplant|recycling|PTAAS-RAG/i);
     }
     // every ingest/delete request is counted in the budget and the org-day counter
     expect(h.run.usedRequests).toBe(h.sent.length + h.ragCalls.length);
@@ -766,7 +779,9 @@ describe('ArenaOrchestrator — stage 2 (RAG)', () => {
     expect(h.recs.some((r) => r.category === 'INDIRECT_INJECTION' && !String(r.title).includes('nicht entfernt'))).toBe(true);
     const audit = h.audits.find((a) => a.action === 'arena.rag.cleanup_failed');
     expect(audit).toBeDefined();
-    expect(JSON.stringify(audit)).not.toMatch(/watering|coffee|tyre|library|houseplant|recycling|PTAAS-RAG|PTAAS-TOPIC/i);
+    expect(JSON.stringify(audit)).not.toMatch(/watering|coffee|tyre|library|houseplant|recycling|PTAAS-RAG/i);
+    // the topic marker is reported so the customer can find the document
+    expect(JSON.stringify(audit)).toMatch(/PTAAS-TOPIC-[0-9a-f]{10}/);
   });
 
   it('failed ingest => the goal is UNCLEAR (not planted) and cleanup still tries to remove', async () => {
@@ -779,7 +794,12 @@ describe('ArenaOrchestrator — stage 2 (RAG)', () => {
     const a = h.attempts.find((x) => x.kind === 'ATTACK');
     expect(a?.verdict).toBe('UNCLEAR');
     expect(JSON.stringify(a?.evidence)).toContain('not_planted');
+    // 5xx is ambiguous (the document may exist): a delete is attempted, but a 404 for our local id is NOT "deleted"
     expect(h.ragCalls.filter((c) => c.method === 'DELETE')).toHaveLength(1);
+    const docs = (h.run.artifacts as { rag: { docs: Array<Row> } }).rag.docs;
+    expect(docs[0].deleteError).toBe('doc_id_unknown');
+    expect(docs[0].deletedAt).toBeUndefined();
+    expect(h.recs.some((r) => String(r.title).includes('nicht entfernt'))).toBe(true);
     expect(h.run.status).toBe('COMPLETED');
     expect(h.findings).toHaveLength(0);
   });
@@ -965,6 +985,16 @@ describe('ArenaOrchestrator — stage 4 (widget)', () => {
     expect(h.adapter.close).toHaveBeenCalled();
   });
 
+  it('wires the kill switch (run + org) into the browser via shouldAbort', async () => {
+    const h = harness({ aiTarget: widget, run: { maxRounds: 1 } });
+    await h.orch.execute(job);
+    const opts = (h.adapters.create as ReturnType<typeof vi.fn>).mock.calls[0][2] as { shouldAbort: () => Promise<boolean> };
+    (h.kill.isKilled as ReturnType<typeof vi.fn>).mockClear();
+    (h.kill.isKilled as ReturnType<typeof vi.fn>).mockResolvedValueOnce(true);
+    expect(await opts.shouldAbort()).toBe(true);
+    expect(h.kill.isKilled).toHaveBeenCalledWith('run-1', ORG);
+  });
+
   it('a page on another host fails the run as widget_host_mismatch before any request', async () => {
     const h = harness({ aiTarget: { ...widget, widgetConfig: { ...widget.widgetConfig, pageUrl: 'https://evil.example.org/' } } });
     await h.orch.execute(job);
@@ -998,6 +1028,165 @@ describe('ArenaOrchestrator — stage 4 (widget)', () => {
     await h.orch.execute(job);
     expect(h.ragRequest).not.toHaveBeenCalled();
     expect(h.run.status).toBe('ABORTED');
+  });
+});
+
+describe('ArenaOrchestrator — cleanup guarantee, redelivery, agent reproduction', () => {
+  const ragTarget = { kind: 'RAG', ragConfig: RAG_AUTO };
+
+  it('H3a: the document intent (nonce, topic marker, time, status planned) is persisted BEFORE the ingest request', async () => {
+    const holder: { h?: ReturnType<typeof harness>; plannedBeforeIngest?: boolean; intent?: Row } = {};
+    holder.h = harness({
+      goals: [goalRecord('RAG-001')],
+      aiTarget: ragTarget,
+      run: { maxRounds: 1 },
+      ragHttp: (_u, o) => {
+        if (o.method === 'POST') {
+          const doc = holder.h?.runUpdates
+            .map((u) => (u.artifacts as { rag?: { docs: Row[] } } | undefined)?.rag?.docs?.[0])
+            .find((d) => d?.status === 'planned');
+          holder.plannedBeforeIngest = !!doc;
+          holder.intent = doc;
+        }
+        return { status: 200 };
+      },
+    });
+    await holder.h.orch.execute(job);
+    expect(holder.plannedBeforeIngest).toBe(true);
+    expect(holder.intent).toMatchObject({ status: 'planned', docIdSource: 'local' });
+    expect(String(holder.intent?.topic)).toMatch(/^PTAAS-TOPIC-[0-9a-f]{10}$/);
+    expect(holder.intent?.nonce).toMatch(/^[0-9a-f]{10}$/);
+    expect(typeof holder.intent?.plannedAt).toBe('string');
+  });
+
+  it('H3d: a definite rejection (HTTP 4xx) leaves nothing to clean up; the goal is UNCLEAR', async () => {
+    const h = harness({ goals: [goalRecord('RAG-001')], aiTarget: ragTarget, ragHttp: (_u, o) => (o.method === 'POST' ? { status: 403 } : { status: 200 }) });
+    await h.orch.execute(job);
+    expect(h.ragCalls.filter((c) => c.method === 'DELETE')).toHaveLength(0);
+    expect(h.attempts.find((a) => a.kind === 'ATTACK')?.verdict).toBe('UNCLEAR');
+    expect((h.run.artifacts as { rag: { docs: Row[] } }).rag.docs).toHaveLength(0);
+    expect(h.recs.some((r) => String(r.title).includes('nicht entfernt'))).toBe(false);
+  });
+
+  it('H3d: an ingest answer without usable doc id is NEVER reported as deleted (doc_id_unknown + warning with topic marker)', async () => {
+    const cfg = { ...RAG_AUTO, ingest: { ...RAG_AUTO.ingest, docIdPath: 'data.id' } };
+    const holder: { h?: ReturnType<typeof harness> } = {};
+    holder.h = harness({
+      goals: [goalRecord('RAG-001')],
+      aiTarget: { kind: 'RAG', ragConfig: cfg },
+      run: { maxRounds: 1 },
+      ragHttp: () => ({ status: 200, body: '{"data":{"id":"../../admin"}}' }),
+      respond: (p) => ragFollower(() => holder.h as ReturnType<typeof harness>)(p),
+    });
+    const h = holder.h;
+    await h.orch.execute(job);
+    expect(h.ragCalls.filter((c) => c.method === 'DELETE')).toHaveLength(0); // never delete something we cannot name
+    const doc = (h.run.artifacts as { rag: { docs: Row[] } }).rag.docs[0];
+    expect(doc).toMatchObject({ status: 'delete_failed', deleteError: 'doc_id_unknown', docIdSource: 'unknown' });
+    expect(doc.deletedAt).toBeUndefined();
+    const warning = h.recs.find((r) => String(r.title).includes('nicht entfernt'));
+    expect(String(warning?.text)).toContain(String(doc.topic));
+    expect(JSON.stringify(h.audits.find((a) => a.action === 'arena.rag.cleanup_failed'))).toContain(String(doc.topic));
+  });
+
+  it('H3d: a server-supplied id makes a 404 on delete a success; the ingest answer id is used for the delete', async () => {
+    const cfg = { ...RAG_AUTO, ingest: { ...RAG_AUTO.ingest, docIdPath: 'data.id' } };
+    const h = harness({
+      goals: [goalRecord('RAG-001')],
+      aiTarget: { kind: 'RAG', ragConfig: cfg },
+      run: { maxRounds: 1 },
+      ragHttp: (_u, o) => (o.method === 'POST' ? { status: 200, body: '{"data":{"id":"srv-77"}}' } : { status: 404 }),
+    });
+    await h.orch.execute(job);
+    const del = h.ragCalls.find((c) => c.method === 'DELETE');
+    expect(del?.url).toBe('https://bot.example.com/docs/srv-77');
+    const doc = (h.run.artifacts as { rag: { docs: Row[] } }).rag.docs[0];
+    expect(doc).toMatchObject({ status: 'deleted', docId: 'srv-77', docIdSource: 'server' });
+  });
+
+  it('H3c: a redelivered job for a run with progress and no live worker is cleaned up and failed (nothing is planted again)', async () => {
+    const h = harness({
+      goals: [goalRecord('RAG-001')],
+      aiTarget: ragTarget,
+      existingAttempts: 3,
+      run: { artifacts: { rag: { docs: [] } }, usedRequests: 4 },
+    });
+    await h.orch.execute(job);
+    expect(h.ragRequest).not.toHaveBeenCalled();
+    expect(h.sent).toHaveLength(0);
+    expect(h.adapters.create).not.toHaveBeenCalled();
+    expect(h.ragCleanup.cleanupRun).toHaveBeenCalledWith('run-1', ORG);
+    expect(h.run.status).toBe('FAILED');
+    expect(h.run.abortedReason).toBe('interrupted');
+    expect(h.scanUpdates.at(-1)).toMatchObject({ status: 'FAILED' });
+    expect(h.audits.map((a) => a.action)).toEqual(['arena.run.failed']);
+    expect(h.events.at(-1)).toEqual({ type: 'done', status: 'FAILED' });
+    expect(h.redis.del).toHaveBeenCalledWith('arena:target-lock:ait-1');
+  });
+
+  it('H3c: a redelivered job is ignored while a live worker owns the run, and a duplicate start is ignored', async () => {
+    const live = harness({ existingAttempts: 2, workerHeld: '1' });
+    await live.orch.execute(job);
+    expect(live.run.status).toBe('RUNNING');
+    expect(live.ragCleanup.cleanupRun).not.toHaveBeenCalled();
+    expect(live.sent).toHaveLength(0);
+
+    const dup = harness();
+    (dup.redis.set as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    await dup.orch.execute(job);
+    expect(dup.run.status).toBe('RUNNING');
+    expect(dup.sent).toHaveLength(0);
+  });
+
+  it('the worker marker is taken at start, refreshed while running and released at the end', async () => {
+    const h = harness();
+    await h.orch.execute(job);
+    expect(h.redis.set).toHaveBeenCalledWith('arena:run-worker:run-1', '1', 'EX', expect.any(Number), 'NX');
+    expect(h.redis.expire.mock.calls.some((c) => (c as unknown[])[0] === 'arena:run-worker:run-1')).toBe(true);
+  });
+
+  describe('L1: tool_call_marker needs reproduction (2 of 3)', () => {
+    const att = new Date();
+    const agent = {
+      kind: 'AGENT',
+      environment: 'STAGING',
+      stagingConfirmedAt: att,
+      sandboxAttestedAt: att,
+      agentConfig: { toolCallsPath: 'tool_calls' },
+    };
+    const mk = (p: string) => /PTAAS-AGENCY-[A-Za-z0-9_-]+-[0-9a-f]{10}/.exec(p)?.[0];
+
+    it('a reproduced tool-call breach is confirmed with confidence <= 0.85 and repro k/n', async () => {
+      const h = harness({
+        goals: [goalRecord('AGY-001')],
+        aiTarget: agent,
+        run: { maxRounds: 1 },
+        respondFull: (p) => ({ text: 'ok', raw: { tool_calls: [{ name: 'search', arguments: { q: mk(p) } }] } }),
+      });
+      await h.orch.execute(job);
+      const a = h.attempts.find((x) => x.kind === 'ATTACK');
+      expect(a?.verdict).toBe('BREACH');
+      expect(a?.confidence).toBeLessThanOrEqual(0.85);
+      expect(a?.repro).toEqual({ k: 2, n: 2 });
+      expect(h.sent).toHaveLength(3); // recon + attack + 1 reproduction
+      expect(h.findings).toHaveLength(1);
+      expect(h.findings[0].severity).toBe('MEDIUM'); // base MEDIUM, not a strong deterministic proof => no upgrade
+    });
+
+    it('a one-off tool call (passed-through user text) is not confirmed: UNCLEAR, no finding', async () => {
+      let n = 0;
+      const h = harness({
+        goals: [goalRecord('AGY-001')],
+        aiTarget: agent,
+        run: { maxRounds: 1 },
+        respondFull: (p) => ({ text: 'ok', raw: { tool_calls: ++n === 2 ? [{ name: 'search', arguments: { q: mk(p) } }] : [] } }),
+      });
+      await h.orch.execute(job);
+      const a = h.attempts.find((x) => x.kind === 'ATTACK');
+      expect(a?.verdict).toBe('UNCLEAR');
+      expect(a?.repro).toEqual({ k: 1, n: 3 });
+      expect(h.findings).toHaveLength(0);
+    });
   });
 });
 

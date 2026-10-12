@@ -6,6 +6,7 @@ import { ArenaRunProcessor } from './arena-run.processor';
 import { ArenaCatalogService } from './catalog/arena-catalog.service';
 import { FindingsBridgeService } from './findings-bridge.service';
 import { JudgeService } from './judge/judge.service';
+import { RagCleanupService } from './rag/rag-cleanup.service';
 import { RagPlanter } from './rag/rag-planter';
 import { RecommendationService } from './recommendation.service';
 import { AnthropicLlmClient } from './red/anthropic-llm.client';
@@ -27,6 +28,7 @@ export const ENGINE_PROVIDERS: Provider[] = [
   WidgetAdapterFactory,
   AdapterFactory,
   RagPlanter,
+  RagCleanupService,
   ArenaCatalogService,
   JudgeService,
   RedAgent,

@@ -65,6 +65,7 @@ function setup(opts: { resolveSafe?: ReturnType<typeof vi.fn> } = {}) {
         Promise.resolve(row({ id: data.id, adapter: data.adapter, kind: data.kind, environment: data.environment, ragConfig: data.ragConfig ?? null, agentConfig: data.agentConfig ?? null, widgetConfig: data.widgetConfig ?? null, apiKeyEncrypted: data.apiKeyEncrypted, knownPromptFragmentsEncrypted: data.knownPromptFragmentsEncrypted })),
       ),
       update: vi.fn().mockResolvedValue(row()),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       delete: vi.fn().mockResolvedValue({}),
     },
     arenaRun: { count: vi.fn().mockResolvedValue(0), updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
@@ -589,40 +590,62 @@ describe('kind configuration (update) and attestation reset', () => {
   });
 });
 
-describe('attestations', () => {
+describe('attestations (compare-and-set)', () => {
   const rag = () => row({ kind: 'RAG', ragConfig: { mode: 'MANUAL' } });
   const agent = (o: Anyobj = {}) => row({ kind: 'AGENT', environment: 'STAGING', ...o });
+  const withAudit = (svc: AiTargetsService, fn: ReturnType<typeof vi.fn>) => {
+    (svc as unknown as { audit: { logStrict: unknown } }).audit.logStrict = fn;
+  };
 
-  it('sets timestamps then writes the strict audit record (in that order)', async () => {
+  it('writes conditionally on updatedAt/kind/STAGING, then audits, in that order; view is re-read', async () => {
     const { svc, prisma } = setup();
-    prisma.aiTarget.findFirst.mockResolvedValue(agent());
+    const loaded = agent();
+    prisma.aiTarget.findFirst.mockResolvedValue(loaded);
     const order: string[] = [];
-    prisma.aiTarget.update.mockImplementation(() => {
-      order.push('update');
-      return Promise.resolve(agent({ stagingConfirmedAt: new Date('2026-10-13T00:00:00Z'), sandboxAttestedAt: new Date('2026-10-13T00:00:00Z') }));
+    prisma.aiTarget.updateMany.mockImplementation(() => {
+      order.push('cas');
+      return Promise.resolve({ count: 1 });
     });
-    const audit = (svc as unknown as { audit: { logStrict: ReturnType<typeof vi.fn> } }).audit;
-    audit.logStrict = vi.fn().mockImplementation(() => {
+    const audit = vi.fn().mockImplementation(() => {
       order.push('audit');
       return Promise.resolve();
     });
-    const v = await svc.attest('ai1', { stagingConfirmed: true, sandboxAttested: true }, actor);
-    expect(order).toEqual(['update', 'audit']);
-    expect(audit.logStrict).toHaveBeenCalledWith(
+    withAudit(svc, audit);
+    await svc.attest('ai1', { stagingConfirmed: true, sandboxAttested: true }, actor);
+    expect(order).toEqual(['cas', 'audit']);
+    const call = prisma.aiTarget.updateMany.mock.calls[0][0] as { where: Anyobj; data: Anyobj };
+    expect(call.where).toEqual({ id: 'ai1', organizationId: 'org1', updatedAt: loaded.updatedAt, kind: 'AGENT', environment: 'STAGING' });
+    expect(call.data.stagingConfirmedAt).toBeInstanceOf(Date);
+    expect(call.data.sandboxAttestedAt).toBeInstanceOf(Date);
+    expect(audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'arena.target.attested', organizationId: 'org1', resourceId: 'ai1', metadata: expect.objectContaining({ attestations: ['stagingConfirmed', 'sandboxAttested'] }) }),
     );
-    expect(v.attestations.stagingConfirmedAt).toBe('2026-10-13T00:00:00.000Z');
   });
 
-  it('a failing audit write rolls the attestation back and answers 409 AUDIT_FAILED', async () => {
+  it('a concurrent PATCH between load and write (count 0): 409 CONFIG_CHANGED, nothing set, no audit, no rollback', async () => {
+    const { svc, prisma } = setup();
+    prisma.aiTarget.findFirst.mockResolvedValue(agent());
+    prisma.aiTarget.updateMany.mockResolvedValue({ count: 0 });
+    const audit = vi.fn();
+    withAudit(svc, audit);
+    const err = await svc.attest('ai1', { sandboxAttested: true }, actor).catch((e: unknown) => e);
+    expect((err as ConflictException).getResponse()).toMatchObject({ code: 'CONFIG_CHANGED' });
+    expect(prisma.aiTarget.updateMany).toHaveBeenCalledTimes(1);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it('a failing audit write rolls back conditionally (only our own write) and answers 409 AUDIT_FAILED', async () => {
     const { svc, prisma } = setup();
     const prev = new Date('2026-09-01T00:00:00Z');
     prisma.aiTarget.findFirst.mockResolvedValue(agent({ sandboxAttestedAt: prev }));
-    prisma.aiTarget.update.mockResolvedValue(agent());
-    (svc as unknown as { audit: { logStrict: unknown } }).audit.logStrict = vi.fn().mockRejectedValue(new Error('down'));
+    withAudit(svc, vi.fn().mockRejectedValue(new Error('down')));
     const err = await svc.attest('ai1', { sandboxAttested: true }, actor).catch((e: unknown) => e);
     expect((err as ConflictException).getResponse()).toMatchObject({ code: 'AUDIT_FAILED' });
-    expect(prisma.aiTarget.update).toHaveBeenLastCalledWith({ where: { id: 'ai1' }, data: { sandboxAttestedAt: prev } });
+    expect(prisma.aiTarget.updateMany).toHaveBeenCalledTimes(2);
+    const first = prisma.aiTarget.updateMany.mock.calls[0][0] as { data: { updatedAt: Date } };
+    const rollback = prisma.aiTarget.updateMany.mock.calls[1][0] as { where: Anyobj; data: Anyobj };
+    expect(rollback.where).toEqual({ id: 'ai1', organizationId: 'org1', updatedAt: first.data.updatedAt });
+    expect(rollback.data).toEqual({ sandboxAttestedAt: prev });
   });
 
   it('validates applicability: ragDocsPlaced only RAG; staging/sandbox only AGENT; staging needs STAGING; empty is 400', async () => {
@@ -632,15 +655,38 @@ describe('attestations', () => {
     await expect(svc.attest('ai1', { sandboxAttested: true }, actor)).rejects.toThrow(/AGENT targets only/);
     prisma.aiTarget.findFirst.mockResolvedValue(agent({ environment: 'PRODUCTION' }));
     await expect(svc.attest('ai1', { stagingConfirmed: true }, actor)).rejects.toThrow(/STAGING/);
+    expect(prisma.aiTarget.updateMany).not.toHaveBeenCalled();
     prisma.aiTarget.findFirst.mockResolvedValue(rag());
     await expect(svc.attest('ai1', { ragDocsPlaced: true }, actor)).resolves.toBeDefined();
-    expect(prisma.aiTarget.update).toHaveBeenCalledWith(expect.objectContaining({ data: { ragDocsPlacedAt: expect.any(Date) } }));
+    expect(prisma.aiTarget.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { ragDocsPlacedAt: expect.any(Date), updatedAt: expect.any(Date) } }));
   });
 
   it('foreign organization → 404 and nothing is written', async () => {
     const { svc, prisma } = setup();
     prisma.aiTarget.findFirst.mockResolvedValue(null);
     await expect(svc.attest('ai1', { ragDocsPlaced: true }, { ...actor, organizationId: 'other' })).rejects.toThrow(NotFoundException);
+    expect(prisma.aiTarget.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('dry-run header vs auth header (L4)', () => {
+  const t = (svc: AiTargetsService, name: string, auth?: string) =>
+    svc.create({ ...baseDto, kind: 'AGENT', authHeaderName: auth, agentConfig: { dryRunHeaderName: name, dryRunHeaderValue: '1' } }, actor);
+
+  it('rejects a dry-run header equal to the auth header (case-insensitive)', async () => {
+    const { svc, prisma } = setup();
+    await expect(t(svc, 'authorization', 'Authorization')).rejects.toThrow(/must differ/);
+    await expect(t(svc, 'X-API-KEY', 'x-api-key')).rejects.toThrow(/must differ/);
+    expect(prisma.aiTarget.create).not.toHaveBeenCalled();
+    await expect(t(svc, 'X-Dry-Run', 'Authorization')).resolves.toBeDefined();
+  });
+
+  it('is re-checked when only the auth header changes on update', async () => {
+    const { svc, prisma } = setup();
+    prisma.aiTarget.findFirst.mockResolvedValue(
+      row({ kind: 'AGENT', environment: 'STAGING', agentConfig: { dryRunHeaderName: 'X-Dry-Run', dryRunHeaderValue: '1' } }),
+    );
+    await expect(svc.update('ai1', { authHeaderName: 'x-dry-run' }, actor)).rejects.toThrow(/must differ/);
     expect(prisma.aiTarget.update).not.toHaveBeenCalled();
   });
 });

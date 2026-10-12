@@ -1,8 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { IntegrationsService } from '../integrations/integrations.service';
+import { RedisService } from '../redis/redis.service';
+import { withCronLock, utcDayKey } from '../common/cron-lock';
 
 export type SlaStatus = 'ON_TRACK' | 'AT_RISK' | 'BREACHED';
 
@@ -24,10 +26,13 @@ const DEFAULTS: SlaPolicy = {
 
 @Injectable()
 export class SlaService {
+  private readonly logger = new Logger(SlaService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly integrations: IntegrationsService,
+    private readonly redis: RedisService,
   ) {}
 
   async getPolicy(orgId: string): Promise<SlaPolicy> {
@@ -130,38 +135,56 @@ export class SlaService {
 
   @Cron(CronExpression.EVERY_DAY_AT_9AM)
   async notifyBreachingFindings() {
+    await withCronLock(
+      this.redis,
+      `sla:breach-notify:${utcDayKey()}`,
+      3600,
+      () => this.runBreachNotifications(),
+      { releaseOnFinish: false },
+    );
+  }
+
+  private async runBreachNotifications() {
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
     for (const org of orgs) {
-      const policy = await this.getPolicy(org.id);
-      const findings = await this.prisma.finding.findMany({
-        where: { organizationId: org.id, status: { notIn: ['FIXED', 'FALSE_POSITIVE', 'ACCEPTED_RISK'] } },
-        select: { id: true, title: true, severity: true, status: true, createdAt: true, projectId: true },
-      });
-      const breaching = findings
-        .map((f) => this.enrichFinding(f, policy))
-        .filter((f) => f.slaStatus === 'BREACHED' || (f.slaStatus === 'AT_RISK' && f.slaDaysRemaining <= 1));
-
-      if (breaching.length === 0) continue;
-
-      // Fire integration webhook for SLA breach
-      await this.integrations.notify('sla.breach', org.id, {
-        breachedCount: breaching.filter((f) => f.slaStatus === 'BREACHED').length,
-        atRiskCount: breaching.filter((f) => f.slaStatus === 'AT_RISK').length,
-        totalCount: breaching.length,
-        findingIds: breaching.map((f) => f.id),
-      }).catch(() => { /* non-fatal */ });
-
-      const members = await this.prisma.organizationMember.findMany({
-        where: { organizationId: org.id, role: 'ADMIN' },
-        select: { userId: true },
-      });
-      for (const m of members) {
-        await this.notifications.create(m.userId, {
-          type:    'SLA_BREACH',
-          message: `${breaching.length} finding(s) have breached or are about to breach their SLA remediation deadline.`,
-          link:    '/dashboard',
-        });
+      try {
+        await this.notifyOrg(org.id);
+      } catch (err: unknown) {
+        this.logger.warn(`SLA breach notification failed: org=${org.id} error=${err instanceof Error ? err.name : 'UnknownError'}`);
       }
+    }
+  }
+
+  private async notifyOrg(orgId: string) {
+    const policy = await this.getPolicy(orgId);
+    const findings = await this.prisma.finding.findMany({
+      where: { organizationId: orgId, status: { notIn: ['FIXED', 'FALSE_POSITIVE', 'ACCEPTED_RISK'] } },
+      select: { id: true, title: true, severity: true, status: true, createdAt: true, projectId: true },
+    });
+    const breaching = findings
+      .map((f) => this.enrichFinding(f, policy))
+      .filter((f) => f.slaStatus === 'BREACHED' || (f.slaStatus === 'AT_RISK' && f.slaDaysRemaining <= 1));
+
+    if (breaching.length === 0) return;
+
+    // Fire integration webhook for SLA breach
+    await this.integrations.notify('sla.breach', orgId, {
+      breachedCount: breaching.filter((f) => f.slaStatus === 'BREACHED').length,
+      atRiskCount: breaching.filter((f) => f.slaStatus === 'AT_RISK').length,
+      totalCount: breaching.length,
+      findingIds: breaching.map((f) => f.id),
+    }).catch(() => { /* non-fatal */ });
+
+    const members = await this.prisma.organizationMember.findMany({
+      where: { organizationId: orgId, role: 'ADMIN' },
+      select: { userId: true },
+    });
+    for (const m of members) {
+      await this.notifications.create(m.userId, {
+        type:    'SLA_BREACH',
+        message: `${breaching.length} finding(s) have breached or are about to breach their SLA remediation deadline.`,
+        link:    '/dashboard',
+      });
     }
   }
 }

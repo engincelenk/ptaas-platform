@@ -9,6 +9,7 @@ import {
   RETENTION_LOCK_KEY,
   RETENTION_PLACEHOLDER,
 } from './arena-retention.service';
+import type { RagCleanupService } from './rag/rag-cleanup.service';
 
 const NOW = new Date('2026-10-12T12:00:00Z');
 
@@ -41,13 +42,15 @@ function setup(lock: 'OK' | null = 'OK') {
   const audit = { logStrict: vi.fn(async () => undefined) };
   const redis = { set: vi.fn(async () => lock), del: vi.fn(async () => 1) };
   const eventsSvc = { publish: vi.fn(async (_o: string, _r: string, e: ArenaEvent) => void events.push(e)) };
+  const ragCleanup = { cleanupRun: vi.fn(async () => ({ open: 1, deleted: 1, failed: 0 })) };
   const svc = new ArenaRetentionService(
     prisma as unknown as PrismaService,
     eventsSvc as unknown as ArenaEventsService,
     audit as unknown as AuditService,
+    ragCleanup as unknown as RagCleanupService,
     redis,
   );
-  return { svc, prisma, audit, redis, events };
+  return { svc, prisma, audit, redis, events, ragCleanup };
 }
 
 describe('ArenaRetentionService', () => {
@@ -134,5 +137,34 @@ describe('ArenaRetentionService', () => {
     vi.advanceTimersByTime(12 * 3600 * 1000);
     expect(spy).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+});
+
+describe('ArenaRetentionService — RAG document cleanup', () => {
+  it('cleans up the documents of a stalled run it reaps', async () => {
+    const { svc, ragCleanup } = setup();
+    await svc.runOnce(NOW);
+    expect(ragCleanup.cleanupRun).toHaveBeenCalledWith('run-s', 'org-1');
+  });
+
+  it('sweeps finished runs that still have open (planned/planted) documents, and only those', async () => {
+    const { svc, prisma, ragCleanup } = setup();
+    const open = { id: 'r-open', organizationId: 'org-1', artifacts: { rag: { docs: [{ docId: 'a', status: 'planted', plantedAt: 'x' }] } } };
+    const done = { id: 'r-done', organizationId: 'org-1', artifacts: { rag: { docs: [{ docId: 'b', status: 'deleted', deletedAt: 'x' }] } } };
+    const noRag = { id: 'r-agent', organizationId: 'org-1', artifacts: { agent: { toolCallsObserved: 2 } } };
+    const orig = prisma.arenaRun.findMany.getMockImplementation();
+    prisma.arenaRun.findMany.mockImplementation(((a: { where: { status?: unknown } }) =>
+      typeof a.where.status === 'object' ? Promise.resolve([open, done, noRag]) : (orig as (x: unknown) => Promise<unknown[]>)(a)) as never);
+    const r = await svc.runOnce(NOW);
+    expect(r.ragRunsCleaned).toBe(1);
+    expect(ragCleanup.cleanupRun).toHaveBeenCalledWith('r-open', 'org-1');
+    expect(ragCleanup.cleanupRun).not.toHaveBeenCalledWith('r-done', expect.anything());
+    expect(ragCleanup.cleanupRun).not.toHaveBeenCalledWith('r-agent', expect.anything());
+  });
+
+  it('a failing cleanup does not stop the retention run', async () => {
+    const { svc, ragCleanup } = setup();
+    ragCleanup.cleanupRun.mockRejectedValue(new Error('boom'));
+    await expect(svc.runOnce(NOW)).resolves.toBeDefined();
   });
 });

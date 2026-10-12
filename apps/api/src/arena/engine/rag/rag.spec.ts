@@ -73,7 +73,7 @@ describe('RagPlanter', () => {
   it('ingest substitutes placeholders only in values, uses SafeHttpService with auth and port 443, and reads the doc id', async () => {
     const { planter, calls, ctx, config, doc, before } = setup();
     const id = await planter.ingest(ctx, config, doc);
-    expect(id).toBe('srv-1');
+    expect(id).toEqual({ docId: 'srv-1', source: 'server' });
     expect(before).toHaveBeenCalledTimes(1);
     expect(calls[0].url).toBe('https://bot.example.com/docs');
     expect(calls[0].opts.method).toBe('POST');
@@ -84,12 +84,27 @@ describe('RagPlanter', () => {
     expect(body.doc.text).toBe(doc.content);
   });
 
-  it('falls back to our own doc id without docIdPath, fails with a code when the path is missing', async () => {
+  it('uses our own id (source local) without docIdPath; an answer without usable id is reported as source unknown', async () => {
     const s = setup();
     const noPath = { ...s.config, ingest: { ...(s.config.ingest as object), docIdPath: undefined } } as typeof s.config;
-    expect(await s.planter.ingest(s.ctx, noPath, s.doc)).toBe(s.doc.docId);
-    const s2 = setup([{ status: 200, body: '{"other":1}' }]);
-    await expect(s2.planter.ingest(s2.ctx, s2.config, s2.doc)).rejects.toMatchObject({ code: 'doc_id_missing' });
+    expect(await s.planter.ingest(s.ctx, noPath, s.doc)).toEqual({ docId: s.doc.docId, source: 'local' });
+    for (const body of ['{"other":1}', 'not json', '{"data":{"id":""}}']) {
+      const s2 = setup([{ status: 200, body }]);
+      expect(await s2.planter.ingest(s2.ctx, s2.config, s2.doc), body).toEqual({ docId: s2.doc.docId, source: 'unknown' });
+    }
+  });
+
+  it('M4: server-supplied doc ids are restricted to a boring alphabet before they are used anywhere', async () => {
+    for (const bad of ['..', '.', '../../admin', 'a/b', 'a b', 'a?x=1', 'a#b', 'x'.repeat(129), 'id\r\nHost: evil']) {
+      const s = setup([{ status: 200, body: JSON.stringify({ data: { id: bad } }) }]);
+      expect((await s.planter.ingest(s.ctx, s.config, s.doc)).source, bad).toBe('unknown');
+    }
+    for (const good of ['abc-123', 'doc_1:v2', 'A'.repeat(128)]) {
+      const s = setup([{ status: 200, body: JSON.stringify({ data: { id: good } }) }]);
+      expect(await s.planter.ingest(s.ctx, s.config, s.doc)).toEqual({ docId: good, source: 'server' });
+    }
+    const n = setup([{ status: 200, body: '{"data":{"id":12345}}' }]);
+    expect((await n.planter.ingest(n.ctx, n.config, n.doc)).docId).toBe('12345');
   });
 
   it('maps HTTP and network failures to short codes, SSRF refusals to TargetUnsafeError', async () => {
@@ -120,13 +135,31 @@ describe('RagPlanter', () => {
     expect(s.before).not.toHaveBeenCalled();
   });
 
-  it('delete encodes the doc id in the URL (no path/host injection) and treats 404 as success', async () => {
+  it('delete builds the URL/body from a validated id; a 404 only counts as success for a server-supplied id', async () => {
     const s = setup([{ status: 404 }]);
-    s.doc.docId = '../../admin?x=1#frag';
+    s.doc.docId = 'doc_1:v2';
+    s.doc.docIdSource = 'server';
     await s.planter.remove(s.ctx, s.config, s.doc);
-    expect(s.calls[0].url).toBe(`https://bot.example.com/docs/${encodeURIComponent('../../admin?x=1#frag')}`);
+    expect(s.calls[0].url).toBe(`https://bot.example.com/docs/${encodeURIComponent('doc_1:v2')}`);
     expect(s.calls[0].opts.method).toBe('DELETE');
-    expect(JSON.parse(s.calls[0].opts.body ?? '')).toEqual({ id: '../../admin?x=1#frag' });
+    expect(JSON.parse(s.calls[0].opts.body ?? '')).toEqual({ id: 'doc_1:v2' });
+    // local id + 404: could be the wrong id => never reported as deleted
+    const local = setup([{ status: 404 }]);
+    await expect(local.planter.remove(local.ctx, local.config, local.doc)).rejects.toMatchObject({ code: 'doc_id_unknown' });
+    // local id + 2xx: the target acknowledged the deletion
+    const okLocal = setup([{ status: 204 }]);
+    await expect(okLocal.planter.remove(okLocal.ctx, okLocal.config, okLocal.doc)).resolves.toBeUndefined();
+    // unknown id / unsafe id: no request at all
+    for (const mutate of [
+      (d: typeof s.doc) => void (d.docIdSource = 'unknown'),
+      (d: typeof s.doc) => void (d.docId = '../../admin'),
+      (d: typeof s.doc) => void (d.docId = '..'),
+    ]) {
+      const u = setup();
+      mutate(u.doc);
+      await expect(u.planter.remove(u.ctx, u.config, u.doc)).rejects.toMatchObject({ code: 'doc_id_unknown' });
+      expect(u.request).not.toHaveBeenCalled();
+    }
     const bad = setup([{ status: 500 }]);
     await expect(bad.planter.remove(bad.ctx, bad.config, bad.doc)).rejects.toMatchObject({ code: 'http_500' });
     const none = setup();
