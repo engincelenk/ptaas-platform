@@ -25,6 +25,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { AsmModule } from './asm/asm.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
+import { ArenaModule } from './arena/arena.module';
 import { MailModule } from './mail/mail.module';
 import { InvitationsModule } from './invitations/invitations.module';
 import { ComplianceModule } from './compliance/compliance.module';
@@ -99,6 +100,7 @@ import { MarketplaceModule } from './marketplace/marketplace.module';
     AsmModule,
     IntegrationsModule,
     MonitoringModule,
+    ArenaModule,
     InvitationsModule,
     ComplianceModule,
     ScanPoliciesModule,
