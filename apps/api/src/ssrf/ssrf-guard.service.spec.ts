@@ -60,3 +60,50 @@ describe('SsrfGuardService.assertSafeUrl', () => {
     await expect(guard.assertSafeUrl('ftp://example.com/')).rejects.toThrow(BadRequestException);
   });
 });
+
+class StubGuard extends SsrfGuardService {
+  constructor(private readonly answers: Array<{ address: string; family: 4 | 6 }>) {
+    super();
+  }
+  protected async lookupAll() {
+    return this.answers;
+  }
+}
+
+describe('SsrfGuardService.resolveSafe', () => {
+  it('returns the checked addresses for a public host', async () => {
+    const g = new StubGuard([{ address: '93.184.216.34', family: 4 }]);
+    await expect(g.resolveSafe('example.com')).resolves.toEqual([
+      { address: '93.184.216.34', family: 4 },
+    ]);
+  });
+
+  it('rejects if ANY resolved address is internal (mixed answer)', async () => {
+    const g = new StubGuard([
+      { address: '93.184.216.34', family: 4 },
+      { address: '10.0.0.5', family: 4 },
+    ]);
+    await expect(g.resolveSafe('rebind.example')).rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects when nothing resolves', async () => {
+    const g = new StubGuard([]);
+    await expect(g.resolveSafe('nx.example')).rejects.toThrow('Could not resolve host');
+  });
+
+  it('handles bracketed IPv6 literals with port', async () => {
+    const g = new StubGuard([]);
+    await expect(g.resolveSafe('[::1]:8080')).rejects.toThrow('disallowed address range');
+    await expect(g.resolveSafe('[2606:4700:4700::1111]:443')).resolves.toEqual([
+      { address: '2606:4700:4700::1111', family: 6 },
+    ]);
+  });
+});
+
+describe('SsrfGuardService.assertSafeHost — extended ranges', () => {
+  for (const ip of ['192.0.2.1', '224.0.0.1', '::', 'ff02::1', '2002:c0a8:0101::1', '::ffff:c0a8:0101']) {
+    it(`blocks ${ip}`, async () => {
+      await expect(guard.assertSafeHost(ip)).rejects.toThrow(BadRequestException);
+    });
+  }
+});
