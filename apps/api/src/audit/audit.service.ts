@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { redactMetadata } from './redact';
 
 export interface AuditEvent {
   action: string;
@@ -38,5 +39,25 @@ export class AuditService {
           error: err instanceof Error ? err.message : String(err),
         });
       });
+  }
+
+  /**
+   * For security-critical events (run start, consent, kill-switch): awaited and
+   * NOT swallowed — if the audit record cannot be written the caller must abort.
+   * Metadata is redacted so secrets/transcripts never reach the audit table.
+   */
+  async logStrict(event: AuditEvent): Promise<void> {
+    await this.prisma.auditLog.create({
+      data: {
+        action: event.action,
+        userId: event.userId,
+        organizationId: event.organizationId,
+        resource: event.resource,
+        resourceId: event.resourceId,
+        metadata: redactMetadata(event.metadata) as object,
+        ipAddress: event.ipAddress,
+        userAgent: event.userAgent,
+      },
+    });
   }
 }
