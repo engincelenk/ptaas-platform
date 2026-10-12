@@ -34,7 +34,7 @@ function BackupCodeForm() {
       if (data.accessToken) {
         document.cookie = `ptaas_access=${data.accessToken}; path=/; max-age=900; SameSite=Strict`;
       }
-      router.push('/dashboard');
+      router.push('/arena');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid backup code');
       setBackupCode('');

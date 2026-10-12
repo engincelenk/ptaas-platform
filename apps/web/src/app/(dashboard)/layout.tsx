@@ -11,7 +11,8 @@ import { GlobalSearch, SearchTrigger } from '@/components/search/global-search';
 import { ThemeToggle } from '@/components/theme/theme-toggle';
 import { apiClient } from '@/lib/api-client';
 
-const navItems = [
+const navItems: { href: string; label: string; highlight?: boolean }[] = [
+  { href: '/arena', label: 'AI Arena', highlight: true },
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/dashboard/analytics', label: 'Analytics' },
   { href: '/dashboard/posture', label: 'Posture' },
@@ -82,14 +83,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <OrgSwitcher currentOrgId={orgId} />
             </div>
             <nav className="hidden md:flex items-center gap-1">
-              {navItems.map(({ href, label }) => (
+              {navItems.map(({ href, label, highlight }) => (
                 <Link
                   key={href}
                   href={href}
                   className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
                     pathname === href || pathname.startsWith(href + '/')
                       ? 'bg-accent text-accent-foreground font-medium'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+                      : highlight
+                        ? 'text-primary font-semibold bg-primary/10 hover:bg-primary/20'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
                   }`}
                 >
                   {label}
@@ -131,7 +134,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="pb-2">
               <SearchTrigger />
             </div>
-            {navItems.map(({ href, label }) => (
+            {navItems.map(({ href, label, highlight }) => (
               <Link
                 key={href}
                 href={href}
@@ -139,7 +142,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 className={`block px-3 py-2 rounded-md text-sm transition-colors ${
                   pathname === href || pathname.startsWith(href + '/')
                     ? 'bg-accent text-accent-foreground font-medium'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+                    : highlight
+                      ? 'text-primary font-semibold bg-primary/10'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
                 }`}
               >
                 {label}

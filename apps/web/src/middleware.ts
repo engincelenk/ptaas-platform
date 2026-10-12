@@ -15,9 +15,9 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Root → dashboard
+  // Root → AI Arena (start page)
   if (pathname === '/') {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    return NextResponse.redirect(new URL('/arena', request.url));
   }
 
   return NextResponse.next();

@@ -28,7 +28,7 @@ function SamlCallbackPageContent() {
     localStorage.setItem('ptaas_refresh_token', refreshToken);
 
     // Clean URL and redirect
-    router.replace('/dashboard');
+    router.replace('/arena');
   }, [params, router]);
 
   if (error) {

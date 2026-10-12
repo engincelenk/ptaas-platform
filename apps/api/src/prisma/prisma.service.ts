@@ -11,6 +11,7 @@ const TENANT_MODELS = new Set([
   'finding', 'target', 'scan', 'project',
   'integration', 'apikey', 'scanpolicy', 'webhook',
   'asmscan', 'notification',
+  'aitarget', 'arenarun', 'arenaattempt', 'arenarecommendation',
 ]);
 
 const WRITE_ACTIONS = new Set([

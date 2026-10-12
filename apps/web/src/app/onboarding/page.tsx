@@ -52,7 +52,7 @@ export default function OnboardingPage() {
           <TargetStep
             projectId={projectId}
             onNext={(id) => { setTargetId(id); setStep('verify'); }}
-            onSkip={() => router.replace('/dashboard')}
+            onSkip={() => router.replace('/arena')}
           />
         )}
         {step === 'verify' && (
@@ -60,11 +60,11 @@ export default function OnboardingPage() {
             projectId={projectId}
             targetId={targetId}
             onNext={() => setStep('done')}
-            onSkip={() => router.replace('/dashboard')}
+            onSkip={() => router.replace('/arena')}
           />
         )}
         {step === 'done' && (
-          <DoneStep onGo={() => router.replace('/dashboard')} />
+          <DoneStep onGo={() => router.replace('/arena')} />
         )}
       </div>
     </div>

@@ -62,7 +62,7 @@ export default function LoginPage() {
         totpCode: code,
       });
       localStorage.setItem('ptaas_access_token', data.accessToken);
-      router.replace('/dashboard');
+      router.replace('/arena');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid MFA code');
       setTotpCode('');
