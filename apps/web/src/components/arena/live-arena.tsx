@@ -146,6 +146,20 @@ export function LiveArena({ attempts, goals, projectId, running }: LiveArenaProp
                       </Link>
                     )}
                   </div>
+                  {a.toolCalls && a.toolCalls.length > 0 && (
+                    <div className="rounded-md border border-orange-500/40 bg-orange-500/5 p-2 space-y-1" data-testid="tool-calls">
+                      <p className="text-[11px] font-semibold text-orange-700 dark:text-orange-400">
+                        Beobachtete Tool-Aufrufe ({a.toolCalls.length})
+                      </p>
+                      {a.toolCalls.map((tc, i) => (
+                        <div key={`${a.id}-tc-${i}`} className="text-xs">
+                          <span className="font-semibold">Tool: </span>
+                          <TranscriptText text={tc.name} className="inline" />
+                          <TranscriptText text={tc.arguments} className="mt-0.5" />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {a.responseText === null ? (
                     <p className="text-xs text-muted-foreground italic">Antwort steht noch aus …</p>
                   ) : (

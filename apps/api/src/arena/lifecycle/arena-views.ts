@@ -8,7 +8,16 @@ export interface AiTargetView {
   projectId: string;
   name: string;
   endpointUrl: string;
-  adapter: 'OPENAI_COMPAT' | 'ANTHROPIC' | 'GENERIC_JSON';
+  adapter: 'OPENAI_COMPAT' | 'ANTHROPIC' | 'GENERIC_JSON' | 'WIDGET';
+  kind: 'CHAT' | 'RAG' | 'AGENT' | 'WIDGET';
+  environment: 'STAGING' | 'PRODUCTION';
+  /** Secret-free per-kind configuration (null when not applicable). */
+  ragConfig: Record<string, unknown> | null;
+  agentConfig: Record<string, unknown> | null;
+  widgetConfig: Record<string, unknown> | null;
+  attestations: { ragDocsPlacedAt: string | null; stagingConfirmedAt: string | null; sandboxAttestedAt: string | null };
+  /** Non-blocking configuration hints (e.g. missing RAG delete configuration). */
+  configWarnings: string[];
   authHeaderName: string | null;
   hasApiKey: boolean;
   fragmentCount: number;
@@ -36,6 +45,7 @@ export interface RunSummary {
   id: string;
   aiTargetId: string;
   targetName: string;
+  targetKind: 'CHAT' | 'RAG' | 'AGENT' | 'WIDGET';
   status: string;
   goalCount: number;
   breachRate: number | null;
@@ -61,6 +71,12 @@ export interface RunView extends RunSummary {
   retestOfRunId: string | null;
   abortedReason: string | null;
   scanId: string;
+  artifactsSummary: ArtifactsSummary | null;
+}
+
+export interface ArtifactsSummary {
+  rag?: { planted: number; deleted: number; cleanupFailed: number };
+  agent?: { toolCallsObserved: number };
 }
 
 export interface GoalView {
@@ -72,6 +88,7 @@ export interface GoalView {
   owaspRef: string | null;
   atlasRef: string | null;
   baseSeverity: string;
+  kinds: string[];
 }
 
 export interface RecommendationView {

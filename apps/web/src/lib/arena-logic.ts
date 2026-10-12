@@ -268,28 +268,6 @@ export function runActions(role: string | null | undefined, status: string): Run
   };
 }
 
-export interface ApprovalChecks {
-  noProduction: boolean;
-  noSideEffects: boolean;
-  noTools: boolean;
-  providerTosAccepted: boolean;
-}
-
-export function canSubmitApproval(
-  checks: ApprovalChecks,
-  emergencyContact: string,
-  roeVersion: number | null,
-): boolean {
-  return (
-    checks.noProduction &&
-    checks.noSideEffects &&
-    checks.noTools &&
-    checks.providerTosAccepted &&
-    emergencyContact.trim().length >= 5 &&
-    roeVersion !== null
-  );
-}
-
 /* ---------- Targets ---------- */
 
 /** Only verified targets with a fresh verification may be used for a run. */

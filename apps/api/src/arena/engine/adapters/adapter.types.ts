@@ -16,6 +16,8 @@ export interface AdapterResponse {
 
 export interface ArenaTargetAdapter {
   send(prompt: string, ctx?: AdapterSendContext): Promise<AdapterResponse>;
+  /** Releases resources (browser sessions). Called by the orchestrator when the run ends. */
+  close?(): Promise<void>;
 }
 
 export interface AdapterClock {
@@ -35,6 +37,8 @@ export interface AdapterConfig {
   requestsPerSecond: number;
   requestMapping?: unknown;
   responseMapping?: unknown;
+  /** Fixed extra headers (validated per request). */
+  extraHeaders?: Record<string, string>;
 }
 
 export interface AdapterStats {

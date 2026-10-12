@@ -5,15 +5,24 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { createId } from '@paralleldrive/cuid2';
-import type { Prisma } from '@ptaas/db';
+import { Prisma } from '@ptaas/db';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../audit/audit.service';
 import { CryptoService } from '../../crypto/crypto.service';
 import { SsrfGuardService } from '../../ssrf/ssrf-guard.service';
 import { VerificationService } from '../../targets/verification.service';
 import { isVerificationFresh } from '../../targets/verification-ttl';
-import { ARENA_LIMITS, isForbiddenHeaderName, isProviderHost } from '../arena.constants';
-import type { CreateAiTargetDto, UpdateAiTargetDto, VerificationMethodName } from '../dto/arena.dto';
+import { ARENA_LIMITS, isProviderHost } from '../arena.constants';
+import type {
+  ArenaEnvironmentName,
+  ArenaTargetKindName,
+  AttestTargetDto,
+  CreateAiTargetDto,
+  UpdateAiTargetDto,
+  VerificationMethodName,
+} from '../dto/arena.dto';
+import { assertHeaderName, assertMapping } from './ai-target-validation';
+import { hostOfUrl, validateKindConfig } from './ai-target-config';
 import type { AiTargetView, ArenaActor, RequestMeta, VerificationView } from './arena-views';
 
 const VERIFICATION_PREFIX = 'ptaas-verify';
@@ -25,7 +34,14 @@ export function aiTargetAad(organizationId: string, aiTargetId: string, field: '
   return `${organizationId}:${aiTargetId}:${field}`;
 }
 
+export { assertHeaderName, assertMapping, MAPPING_MAX_BYTES, MAPPING_MAX_DEPTH } from './ai-target-validation';
+
 const CONFIG_FIELDS = [
+  'kind',
+  'environment',
+  'ragConfig',
+  'agentConfig',
+  'widgetConfig',
   'endpointUrl',
   'adapter',
   'requestMapping',
@@ -34,45 +50,6 @@ const CONFIG_FIELDS = [
   'apiKey',
   'knownPromptFragments',
 ] as const;
-const HEADER_NAME = /^[A-Za-z][A-Za-z0-9-]{0,63}$/;
-const FORBIDDEN_TEMPLATE_KEYS = new Set(['tools', 'tool_choice', 'functions', 'function_call', '__proto__', 'constructor', 'prototype']);
-export const MAPPING_MAX_BYTES = 4096;
-export const MAPPING_MAX_DEPTH = 6;
-
-/** Auth header name for the customer endpoint: plain token syntax, never a smuggling-prone header. */
-export function assertHeaderName(name: string): void {
-  if (!HEADER_NAME.test(name) || isForbiddenHeaderName(name)) {
-    throw new BadRequestException('authHeaderName is not allowed');
-  }
-}
-
-/** Request/response mapping templates: bounded size and depth, no tool/prototype keys on any level. */
-export function assertMapping(value: unknown, field: string): void {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(value) ?? '';
-  } catch {
-    throw new BadRequestException(`${field} is not valid JSON`);
-  }
-  if (Buffer.byteLength(serialized, 'utf8') > MAPPING_MAX_BYTES) {
-    throw new BadRequestException(`${field} exceeds ${MAPPING_MAX_BYTES} bytes`);
-  }
-  const walk = (node: unknown, depth: number): void => {
-    if (depth > MAPPING_MAX_DEPTH) throw new BadRequestException(`${field} is nested too deeply`);
-    if (Array.isArray(node)) {
-      node.forEach((n) => walk(n, depth + 1));
-    } else if (node && typeof node === 'object') {
-      for (const key of Object.getOwnPropertyNames(node)) {
-        if (FORBIDDEN_TEMPLATE_KEYS.has(key.toLowerCase())) {
-          throw new BadRequestException(`${field} contains the forbidden key "${key}"`);
-        }
-        walk((node as Record<string, unknown>)[key], depth + 1);
-      }
-    }
-  };
-  walk(value, 1);
-}
-
 /**
  * Syntactic endpoint validation (no network): https only, port 443, no credentials,
  * host not a model-provider host. Returns the normalized URL (no fragment).
@@ -137,6 +114,13 @@ export class AiTargetsService {
     this.assertConfig(dto);
     const url = await this.assertEndpoint(dto.endpointUrl);
     const value = url.toString();
+    const kind: ArenaTargetKindName = dto.kind ?? 'CHAT';
+    const environment: ArenaEnvironmentName = dto.environment ?? (kind === 'AGENT' ? 'STAGING' : 'PRODUCTION');
+    const kindCfg = await validateKindConfig(
+      { kind, adapter: dto.adapter, environment, ragConfig: dto.ragConfig, agentConfig: dto.agentConfig, widgetConfig: dto.widgetConfig },
+      url.hostname,
+      (h) => this.ssrfGuard.resolveSafe(h),
+    );
 
     const existing = await this.prisma.target.findFirst({
       where: { projectId: dto.projectId, value, organizationId: actor.organizationId },
@@ -151,6 +135,11 @@ export class AiTargetsService {
       id,
       name: dto.name.trim(),
       adapter: dto.adapter,
+      kind,
+      environment,
+      ragConfig: (kindCfg.ragConfig as Prisma.InputJsonValue | null) ?? undefined,
+      agentConfig: (kindCfg.agentConfig as Prisma.InputJsonValue | null) ?? undefined,
+      widgetConfig: (kindCfg.widgetConfig as Prisma.InputJsonValue | null) ?? undefined,
       requestMapping: (dto.requestMapping as Prisma.InputJsonValue | undefined) ?? undefined,
       responseMapping: (dto.responseMapping as Prisma.InputJsonValue | undefined) ?? undefined,
       authHeaderName: dto.authHeaderName?.trim() || null,
@@ -188,7 +177,7 @@ export class AiTargetsService {
       organizationId: org,
       resource: 'ai_target',
       resourceId: row.id,
-      metadata: { host: url.hostname, adapter: dto.adapter, hasApiKey: Boolean(dto.apiKey) },
+      metadata: { host: url.hostname, adapter: dto.adapter, kind, environment, hasApiKey: Boolean(dto.apiKey) },
       ipAddress: meta.ip,
       userAgent: meta.userAgent,
     });
@@ -226,8 +215,10 @@ export class AiTargetsService {
       data.knownPromptFragmentsEncrypted = this.encryptFragments(dto.knownPromptFragments, org, id);
     }
 
+    let endpointHost = hostOfUrl(current.target.value);
     if (dto.endpointUrl !== undefined) {
       const url = await this.assertEndpoint(dto.endpointUrl);
+      endpointHost = url.hostname;
       const value = url.toString();
       if (value !== current.target.value) {
         const sameHost = hostOf(current.target.value) === url.hostname;
@@ -241,6 +232,35 @@ export class AiTargetsService {
           },
         };
       }
+    }
+
+    const provided = (...fields: (keyof UpdateAiTargetDto)[]): boolean => fields.some((f) => dto[f] !== undefined);
+    if (provided('kind', 'environment', 'adapter', 'ragConfig', 'agentConfig', 'widgetConfig', 'endpointUrl')) {
+      const kind = (dto.kind ?? current.kind) as ArenaTargetKindName;
+      const kindCfg = await validateKindConfig(
+        {
+          kind,
+          adapter: (dto.adapter ?? current.adapter) as CreateAiTargetDto['adapter'],
+          environment: (dto.environment ?? current.environment) as ArenaEnvironmentName,
+          ragConfig: dto.ragConfig ?? (kind === 'RAG' ? current.ragConfig : null),
+          agentConfig: dto.agentConfig ?? (kind === 'AGENT' ? current.agentConfig : null),
+          widgetConfig: dto.widgetConfig ?? (kind === 'WIDGET' ? current.widgetConfig : null),
+        },
+        endpointHost,
+        (h) => this.ssrfGuard.resolveSafe(h),
+      );
+      if (dto.kind !== undefined) data.kind = dto.kind;
+      if (dto.environment !== undefined) data.environment = dto.environment;
+      data.ragConfig = (kindCfg.ragConfig as Prisma.InputJsonValue | null) ?? Prisma.DbNull;
+      data.agentConfig = (kindCfg.agentConfig as Prisma.InputJsonValue | null) ?? Prisma.DbNull;
+      data.widgetConfig = (kindCfg.widgetConfig as Prisma.InputJsonValue | null) ?? Prisma.DbNull;
+    }
+
+    // Attestations only hold for the configuration they were given for.
+    if (provided('kind', 'ragConfig', 'endpointUrl')) data.ragDocsPlacedAt = null;
+    if (provided('kind', 'environment', 'agentConfig', 'endpointUrl', 'adapter', 'apiKey')) {
+      data.stagingConfirmedAt = null;
+      data.sandboxAttestedAt = null;
     }
 
     // Any change of the tested configuration voids approvals given for the old one.
@@ -322,6 +342,65 @@ export class AiTargetsService {
       ipAddress: meta.ip,
       userAgent: meta.userAgent,
     });
+  }
+
+  /**
+   * Customer attestations (documents placed / staging / sandboxed tools). The timestamp is set first,
+   * then the audit record is written; a failing audit write rolls the attestation back.
+   */
+  async attest(id: string, dto: AttestTargetDto, actor: ArenaActor, meta: RequestMeta = {}): Promise<AiTargetView> {
+    const org = actor.organizationId;
+    const row = await this.load(id, org);
+    const names: string[] = [];
+    if (dto.ragDocsPlaced) names.push('ragDocsPlaced');
+    if (dto.stagingConfirmed) names.push('stagingConfirmed');
+    if (dto.sandboxAttested) names.push('sandboxAttested');
+    if (names.length === 0) throw new BadRequestException('No attestation given');
+    if (dto.ragDocsPlaced && row.kind !== 'RAG') throw new BadRequestException('ragDocsPlaced applies to RAG targets only');
+    if ((dto.stagingConfirmed || dto.sandboxAttested) && row.kind !== 'AGENT') {
+      throw new BadRequestException('stagingConfirmed/sandboxAttested apply to AGENT targets only');
+    }
+    if (dto.stagingConfirmed && row.environment !== 'STAGING') {
+      throw new BadRequestException('Set the environment to STAGING before confirming staging');
+    }
+
+    const now = new Date();
+    const data: Prisma.AiTargetUpdateInput = {};
+    const previous: Prisma.AiTargetUpdateInput = {};
+    if (dto.ragDocsPlaced) {
+      data.ragDocsPlacedAt = now;
+      previous.ragDocsPlacedAt = row.ragDocsPlacedAt;
+    }
+    if (dto.stagingConfirmed) {
+      data.stagingConfirmedAt = now;
+      previous.stagingConfirmedAt = row.stagingConfirmedAt;
+    }
+    if (dto.sandboxAttested) {
+      data.sandboxAttestedAt = now;
+      previous.sandboxAttestedAt = row.sandboxAttestedAt;
+    }
+    const updated = await this.prisma.aiTarget.update({ where: { id }, data, include: { target: true } });
+    try {
+      await this.audit.logStrict({
+        action: 'arena.target.attested',
+        userId: actor.userId,
+        organizationId: org,
+        resource: 'ai_target',
+        resourceId: id,
+        metadata: { attestations: names, kind: row.kind, environment: row.environment },
+        ipAddress: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    } catch {
+      await this.prisma.aiTarget.update({ where: { id }, data: previous });
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: 'AUDIT_FAILED',
+        message: 'The audit record could not be written — the attestation was not saved',
+      });
+    }
+    return this.toView(updated);
   }
 
   // ── Verification ─────────────────────────────────────
@@ -427,6 +506,17 @@ export class AiTargetsService {
       name: row.name,
       endpointUrl: t.value,
       adapter: row.adapter,
+      kind: row.kind,
+      environment: row.environment,
+      ragConfig: asRecord(row.ragConfig),
+      agentConfig: asRecord(row.agentConfig),
+      widgetConfig: asRecord(row.widgetConfig),
+      attestations: {
+        ragDocsPlacedAt: row.ragDocsPlacedAt?.toISOString() ?? null,
+        stagingConfirmedAt: row.stagingConfirmedAt?.toISOString() ?? null,
+        sandboxAttestedAt: row.sandboxAttestedAt?.toISOString() ?? null,
+      },
+      configWarnings: configWarnings(row),
       authHeaderName: row.authHeaderName,
       hasApiKey: Boolean(row.apiKeyEncrypted),
       fragmentCount: this.fragmentCount(row),
@@ -440,6 +530,22 @@ export class AiTargetsService {
       createdAt: row.createdAt.toISOString(),
     };
   }
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function configWarnings(row: { kind: string; ragConfig: unknown; agentConfig: unknown }): string[] {
+  const out: string[] = [];
+  const rag = asRecord(row.ragConfig);
+  if (row.kind === 'RAG' && rag?.mode === 'AUTO' && !rag.delete) {
+    out.push('No delete configuration: planted test documents will have to be removed manually.');
+  }
+  if (row.kind === 'AGENT' && !asRecord(row.agentConfig)?.dryRunHeaderName) {
+    out.push('No dry-run header configured: rely on a sandboxed staging environment.');
+  }
+  return out;
 }
 
 function hostOf(value: string): string {

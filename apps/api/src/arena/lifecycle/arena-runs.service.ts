@@ -10,7 +10,7 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import type { Queue } from 'bullmq';
-import type { Prisma } from '@ptaas/db';
+import type { ArenaTargetKind, Prisma } from '@ptaas/db';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../audit/audit.service';
 import { RedisService } from '../../redis/redis.service';
@@ -36,6 +36,7 @@ import {
   type ArenaActor,
   type GoalView,
   type OverviewView,
+  type ArtifactsSummary,
   type RecommendationView,
   type RequestMeta,
   type RunDetailView,
@@ -108,9 +109,12 @@ export class ArenaRunsService {
     if (goalIds.length === 0) throw new BadRequestException('At least one goal is required');
     const goals = await this.prisma.arenaGoal.findMany({
       where: { id: { in: goalIds }, active: true },
-      select: { id: true },
+      select: { id: true, kinds: true },
     });
     if (goals.length !== goalIds.length) throw new BadRequestException('Unknown or inactive goal in goalIds');
+    if (goals.some((g) => !(g.kinds ?? []).includes(aiTarget.kind))) {
+      throw new BadRequestException(`A selected goal does not apply to targets of kind ${aiTarget.kind}`);
+    }
 
     if (dto.retestOfRunId) {
       const prev = await this.prisma.arenaRun.findFirst({
@@ -248,13 +252,14 @@ export class ArenaRunsService {
       verdict: a.verdict,
       confidence: a.confidence,
       findingId: a.findingId,
+      ...toolCallsOf(a.evidence),
       createdAt: a.createdAt.toISOString(),
     }));
   }
 
-  async catalog(): Promise<GoalView[]> {
+  async catalog(kind?: string): Promise<GoalView[]> {
     const goals = await this.prisma.arenaGoal.findMany({
-      where: { active: true },
+      where: { active: true, ...(kind ? { kinds: { has: kind as ArenaTargetKind } } : {}) },
       select: {
         id: true,
         key: true,
@@ -264,6 +269,7 @@ export class ArenaRunsService {
         owaspRef: true,
         atlasRef: true,
         baseSeverity: true,
+        kinds: true,
       },
       orderBy: [{ category: 'asc' }, { key: 'asc' }],
     });
@@ -339,9 +345,10 @@ export class ArenaRunsService {
       throw this.conflict('RUN_NOT_AWAITING_APPROVAL', `Run is ${run.status}, not awaiting approval`);
     }
 
-    const c = dto.confirmations;
-    if (!c || c.noProduction !== true || c.noSideEffects !== true || c.noTools !== true || c.providerTosAccepted !== true) {
-      throw new BadRequestException('All confirmations must be accepted');
+    const c: Record<string, boolean | undefined> = { ...(dto.confirmations ?? {}) };
+    const missing = requiredConfirmations(run.aiTarget.kind).filter((k) => c[k] !== true);
+    if (missing.length > 0) {
+      throw new BadRequestException(`All confirmations must be accepted (missing: ${missing.join(', ')})`);
     }
     const contact = dto.emergencyContact?.trim();
     if (!contact) throw new BadRequestException('An emergency contact is required');
@@ -413,6 +420,7 @@ export class ArenaRunsService {
     // 2 + 3. verified & fresh target, provider denylist, SSRF
     await this.checkTarget(run);
     await this.checkHostSafe(run);
+    await this.checkKind(run);
 
     // 4. time window
     const now = new Date();
@@ -659,6 +667,45 @@ export class ArenaRunsService {
     }
   }
 
+  /** Stage 2-4 preconditions per target kind (each with its own error code). */
+  private async checkKind(run: RunRow): Promise<void> {
+    const t = run.aiTarget;
+    if (t.kind === 'AGENT') {
+      if (t.environment !== 'STAGING') {
+        throw this.conflict('AGENT_NOT_STAGING', 'Agent targets may only be tested in a STAGING environment');
+      }
+      if (!t.stagingConfirmedAt || !t.sandboxAttestedAt) {
+        throw this.conflict('ATTESTATION_MISSING', 'Staging and sandbox attestations are required for agent targets');
+      }
+    } else if (t.kind === 'RAG') {
+      const cfg = asObject(t.ragConfig);
+      if (cfg?.mode === 'AUTO') {
+        if (!asObject(cfg.ingest)) throw this.conflict('RAG_NOT_CONFIGURED', 'RAG mode AUTO requires an ingest configuration');
+      } else if (cfg?.mode === 'MANUAL') {
+        if (!t.ragDocsPlacedAt) throw this.conflict('RAG_DOCS_NOT_PLACED', 'Confirm that the test documents were placed (RAG mode MANUAL)');
+      } else {
+        throw this.conflict('RAG_NOT_CONFIGURED', 'The RAG configuration is missing');
+      }
+    } else if (t.kind === 'WIDGET') {
+      const cfg = asObject(t.widgetConfig);
+      const pageUrl = typeof cfg?.pageUrl === 'string' ? cfg.pageUrl : '';
+      let pageHost = '';
+      try {
+        pageHost = new URL(pageUrl).hostname.toLowerCase();
+      } catch {
+        /* handled below */
+      }
+      if (!pageHost || pageHost !== hostOf(t.target.value).toLowerCase()) {
+        throw this.conflict('WIDGET_HOST_MISMATCH', 'The widget page host must equal the verified endpoint host');
+      }
+      try {
+        await this.ssrfGuard.resolveSafe(pageHost);
+      } catch (err) {
+        throw this.conflict('HOST_UNSAFE', err instanceof Error ? err.message : 'Widget page host is not allowed');
+      }
+    }
+  }
+
   private async checkHostSafe(run: RunRow): Promise<void> {
     try {
       await this.ssrfGuard.resolveSafe(hostOf(run.aiTarget.target.value));
@@ -718,6 +765,7 @@ export class ArenaRunsService {
       id: run.id,
       aiTargetId: run.aiTargetId,
       targetName: run.aiTarget.name,
+      targetKind: run.aiTarget.kind,
       status: run.status,
       goalCount: run.goalIds.length,
       breachRate,
@@ -748,6 +796,7 @@ export class ArenaRunsService {
       retestOfRunId: run.retestOfRunId,
       abortedReason: run.abortedReason,
       scanId: run.scanId,
+      artifactsSummary: summarizeArtifacts(run.artifacts),
     };
   }
 }
@@ -761,6 +810,7 @@ function toGoalView(g: {
   owaspRef: string | null;
   atlasRef: string | null;
   baseSeverity: string;
+  kinds?: string[];
 }): GoalView {
   return {
     id: g.id,
@@ -771,6 +821,7 @@ function toGoalView(g: {
     owaspRef: g.owaspRef,
     atlasRef: g.atlasRef,
     baseSeverity: g.baseSeverity,
+    kinds: g.kinds ?? [],
   };
 }
 
@@ -780,4 +831,50 @@ function hostOf(value: string): string {
   } catch {
     return value;
   }
+}
+
+/** Mandatory approval confirmations per target kind. */
+export function requiredConfirmations(kind: string): string[] {
+  const base = ['noProduction', 'noSideEffects', 'providerTosAccepted'];
+  if (kind === 'AGENT') return [...base, 'stagingOnly', 'toolsSandboxed'];
+  if (kind === 'RAG') return [...base, 'noTools', 'testDocumentsMayBeIndexedAndRemoved'];
+  return [...base, 'noTools'];
+}
+
+function asObject(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+/** Counts only — never document contents or secrets. */
+function summarizeArtifacts(raw: unknown): ArtifactsSummary | null {
+  const a = asObject(raw);
+  if (!a) return null;
+  const out: ArtifactsSummary = {};
+  const rag = asObject(a.rag);
+  if (rag && Array.isArray(rag.docs)) {
+    const docs = rag.docs.map(asObject).filter((d): d is Record<string, unknown> => d !== null);
+    out.rag = {
+      planted: docs.length,
+      deleted: docs.filter((d) => Boolean(d.deletedAt)).length,
+      cleanupFailed: docs.filter((d) => Boolean(d.deleteError)).length,
+    };
+  }
+  const agent = asObject(a.agent);
+  if (agent && typeof agent.toolCallsObserved === 'number') out.agent = { toolCallsObserved: agent.toolCallsObserved };
+  return out.rag || out.agent ? out : null;
+}
+
+/** Tool calls recorded by the engine (already redacted); defensively re-bounded here. */
+function toolCallsOf(evidence: unknown): { toolCalls?: { name: string; arguments: string }[] } {
+  const calls = asObject(evidence)?.toolCalls;
+  if (!Array.isArray(calls)) return {};
+  const list = calls
+    .map(asObject)
+    .filter((c): c is Record<string, unknown> => c !== null && typeof c.name === 'string')
+    .slice(0, ARENA_LIMITS.maxToolCallsRecorded)
+    .map((c) => ({
+      name: String(c.name).slice(0, 200),
+      arguments: (typeof c.arguments === 'string' ? c.arguments : JSON.stringify(c.arguments ?? '')).slice(0, 1000),
+    }));
+  return { toolCalls: list };
 }

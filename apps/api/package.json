@@ -49,6 +49,7 @@
     "passport-saml": "^3.2.4",
     "pdfkit": "^0.15.0",
     "pino-http": "^10.3.0",
+    "playwright-core": "1.61.1",
     "prom-client": "^15.0.0",
     "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.2",

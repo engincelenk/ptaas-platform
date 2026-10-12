@@ -31,6 +31,20 @@ export class RecommendationService {
     @Optional() @Inject(LLM_CLIENT) private readonly llm?: LlmClient,
   ) {}
 
+  /** A single extra recommendation (e.g. warning that test documents could not be removed). */
+  async createWarning(
+    runId: string,
+    organizationId: string,
+    w: { category: ArenaGoalCategory; title: string; text: string; priority: number },
+  ): Promise<CreatedRecommendation> {
+    const row = await this.prisma.arenaRecommendation.create({
+      data: { runId, organizationId, category: w.category, title: w.title, text: w.text, priority: w.priority },
+    });
+    const out = { id: row.id, category: w.category, title: w.title, text: w.text, priority: w.priority };
+    await this.events.publish(organizationId, runId, { type: 'recommendation', ...out });
+    return out;
+  }
+
   /** Always one recommendation per tested category — also when the defence held. Idempotent per run. */
   async createForRun(
     runId: string,

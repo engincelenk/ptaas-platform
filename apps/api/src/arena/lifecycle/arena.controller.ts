@@ -22,6 +22,8 @@ import {
   AbortRunDto,
   ApproveRunDto,
   AttemptsQueryDto,
+  AttestTargetDto,
+  CatalogQueryDto,
   CreateAiTargetDto,
   CreateRunDto,
   KillSwitchDto,
@@ -59,8 +61,8 @@ export class ArenaController {
 
   @Get('catalog')
   @ApiOperation({ summary: 'Attack goal catalog (without seed attacks and success criteria)' })
-  catalog() {
-    return this.runs.catalog();
+  catalog(@Query() query: CatalogQueryDto) {
+    return this.runs.catalog(query.kind);
   }
 
   @Get('roe/current')
@@ -108,6 +110,19 @@ export class ArenaController {
   @ApiOperation({ summary: 'Delete an AI target (not while a run is running)' })
   async deleteTarget(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Req() req: Request): Promise<void> {
     await this.targets.remove(id, actorOf(user), metaOf(req));
+  }
+
+  @Post('targets/:id/attest')
+  @HttpCode(200)
+  @Roles('ADMIN', 'SECURITY_ENGINEER')
+  @ApiOperation({ summary: 'Customer attestations (RAG documents placed / agent staging / sandboxed tools)' })
+  attest(
+    @Param('id') id: string,
+    @Body() dto: AttestTargetDto,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.targets.attest(id, dto, actorOf(user), metaOf(req));
   }
 
   @Get('targets/:id/verification')

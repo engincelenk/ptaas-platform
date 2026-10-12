@@ -9,31 +9,35 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApiQuery } from '@/hooks/use-api-query';
 import { apiClient } from '@/lib/api-client';
-import { canSubmitApproval, type ApprovalChecks } from '@/lib/arena-logic';
-import type { ApproveRunBody, ArenaRoe, ArenaRunView } from '@/lib/arena-types';
+import {
+  CONFIRMATION_LABEL,
+  EMPTY_CHECKS,
+  KIND_LABEL,
+  buildConfirmations,
+  canSubmitApproval,
+  requiredConfirmations,
+  type ApprovalChecks,
+} from '@/lib/arena-kinds';
+import type { ApproveRunBody, ArenaRoe, ArenaRunView, ArenaTargetKind } from '@/lib/arena-types';
 import { TranscriptText } from './transcript-text';
 
-const CHECK_LABELS: Record<keyof ApprovalChecks, string> = {
-  noProduction: 'Das Ziel ist KEIN Produktivsystem mit echten Kunden- oder Personendaten.',
-  noSideEffects: 'Die KI löst keine realen Nebenwirkungen aus (keine Zahlungen, Mails, Löschungen o. Ä.).',
-  noTools: 'Die KI hat in dieser Umgebung keinen Zugriff auf schreibende Tools oder interne Systeme.',
-  providerTosAccepted: 'Die Nutzungsbedingungen des Modell-Providers erlauben diesen Test; ich bin dazu berechtigt.',
-};
-
 /** Approval panel. The caller only mounts this for ADMIN users in AWAITING_APPROVAL. */
-export function ApprovalPanel({ run, onDone }: { run: ArenaRunView; onDone: () => void }) {
+export function ApprovalPanel({
+  run,
+  kind,
+  onDone,
+}: {
+  run: ArenaRunView;
+  kind: ArenaTargetKind;
+  onDone: () => void;
+}) {
   const { data: roe, isLoading, error } = useApiQuery<ArenaRoe>('/arena/roe/current');
-  const [checks, setChecks] = useState<ApprovalChecks>({
-    noProduction: false,
-    noSideEffects: false,
-    noTools: false,
-    providerTosAccepted: false,
-  });
+  const [checks, setChecks] = useState<ApprovalChecks>(EMPTY_CHECKS);
   const [contact, setContact] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const ready = canSubmitApproval(checks, contact, roe?.version ?? null);
+  const ready = canSubmitApproval(kind, checks, contact, roe?.version ?? null);
 
   async function approve() {
     if (!roe || !ready) return;
@@ -42,12 +46,7 @@ export function ApprovalPanel({ run, onDone }: { run: ArenaRunView; onDone: () =
     const body: ApproveRunBody = {
       roeVersion: roe.version,
       emergencyContact: contact.trim(),
-      confirmations: {
-        noProduction: true,
-        noSideEffects: true,
-        noTools: true,
-        providerTosAccepted: true,
-      },
+      confirmations: buildConfirmations(kind),
     };
     try {
       await apiClient.post<ArenaRunView>(`/arena/runs/${encodeURIComponent(run.id)}/approve`, body);
@@ -65,6 +64,7 @@ export function ApprovalPanel({ run, onDone }: { run: ArenaRunView; onDone: () =
         <CardTitle className="text-base">Freigabe (nur Admin)</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        <p className="text-xs font-medium">Ziel-Art: {KIND_LABEL[kind]}</p>
         <p className="text-sm text-muted-foreground">
           Die Freigabe wird mit deinem Namen, Zeitstempel und der Version der Einsatzregeln (RoE) protokolliert.
         </p>
@@ -81,14 +81,14 @@ export function ApprovalPanel({ run, onDone }: { run: ArenaRunView; onDone: () =
         )}
 
         <div className="space-y-2">
-          {(Object.keys(CHECK_LABELS) as (keyof ApprovalChecks)[]).map((k) => (
+          {requiredConfirmations(kind).map((k) => (
             <label key={k} className="flex items-start gap-2 text-sm cursor-pointer">
               <Checkbox
                 className="mt-0.5"
                 checked={checks[k]}
                 onCheckedChange={(c) => setChecks((prev) => ({ ...prev, [k]: c }))}
               />
-              <span>{CHECK_LABELS[k]}</span>
+              <span>{CONFIRMATION_LABEL[k]}</span>
             </label>
           ))}
         </div>

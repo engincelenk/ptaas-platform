@@ -7,6 +7,7 @@ import { AiTargetsService, aiTargetAad, assertHeaderName, assertMapping, parseAr
 import type { ArenaActor } from './arena-views';
 
 const KEY = 'a'.repeat(64);
+type Anyobj = Record<string, unknown>;
 const actor: ArenaActor = { userId: 'u1', organizationId: 'org1', role: 'ADMIN' };
 
 function makeCrypto() {
@@ -20,6 +21,14 @@ function row(over: Record<string, unknown> = {}) {
     targetId: 't1',
     name: 'Bot',
     adapter: 'OPENAI_COMPAT',
+    kind: 'CHAT',
+    environment: 'PRODUCTION',
+    ragConfig: null,
+    agentConfig: null,
+    widgetConfig: null,
+    ragDocsPlacedAt: null,
+    stagingConfirmedAt: null,
+    sandboxAttestedAt: null,
     requestMapping: null,
     responseMapping: null,
     authHeaderName: 'Authorization',
@@ -53,7 +62,7 @@ function setup(opts: { resolveSafe?: ReturnType<typeof vi.fn> } = {}) {
       findFirst: vi.fn().mockResolvedValue(row()),
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-        Promise.resolve(row({ id: data.id, apiKeyEncrypted: data.apiKeyEncrypted, knownPromptFragmentsEncrypted: data.knownPromptFragmentsEncrypted })),
+        Promise.resolve(row({ id: data.id, adapter: data.adapter, kind: data.kind, environment: data.environment, ragConfig: data.ragConfig ?? null, agentConfig: data.agentConfig ?? null, widgetConfig: data.widgetConfig ?? null, apiKeyEncrypted: data.apiKeyEncrypted, knownPromptFragmentsEncrypted: data.knownPromptFragmentsEncrypted })),
       ),
       update: vi.fn().mockResolvedValue(row()),
       delete: vi.fn().mockResolvedValue({}),
@@ -62,7 +71,7 @@ function setup(opts: { resolveSafe?: ReturnType<typeof vi.fn> } = {}) {
     $transaction: vi.fn(),
   };
   prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => Promise.resolve(cb(prisma)));
-  const audit = { log: vi.fn() };
+  const audit = { log: vi.fn(), logStrict: vi.fn().mockResolvedValue(undefined) };
   const ssrf = { resolveSafe: opts.resolveSafe ?? vi.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]) };
   const verification = { verify: vi.fn().mockResolvedValue({ success: true, message: 'ok' }) };
   const svc = new AiTargetsService(prisma as never, audit as never, crypto, ssrf as never, verification as never);
@@ -357,5 +366,281 @@ describe('approval is bound to the configuration', () => {
     expect((err as ConflictException).getResponse()).toMatchObject({ code: 'TARGET_BUSY' });
     expect(prisma.aiTarget.update).not.toHaveBeenCalled();
     expect(prisma.arenaRun.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+// ───────────────────────── stages 2-4 ─────────────────────────
+
+const ragAuto = {
+  mode: 'AUTO',
+  ingest: { url: 'https://chat.example.com/api/docs', method: 'POST', bodyTemplate: { text: '{{content}}', id: '{{docId}}' }, docIdPath: 'data.id' },
+  delete: { url: 'https://chat.example.com/api/docs/{{docId}}', method: 'DELETE' },
+  indexingDelayMs: 3000,
+};
+const widgetCfg = { pageUrl: 'https://chat.example.com/help', inputSelector: '#in', responseSelector: '.msg', responseTimeoutMs: 20000 };
+
+describe('kind configuration (create)', () => {
+  it('defaults: CHAT / PRODUCTION; view exposes kind, environment, configs and attestations', async () => {
+    const { svc, prisma } = setup();
+    const v = await svc.create(baseDto, actor);
+    const data = (prisma.aiTarget.create.mock.calls[0][0] as { data: Loose }).data;
+    expect(data.kind).toBe('CHAT');
+    expect(data.environment).toBe('PRODUCTION');
+    expect(v).toMatchObject({
+      kind: 'CHAT',
+      environment: 'PRODUCTION',
+      ragConfig: null,
+      agentConfig: null,
+      widgetConfig: null,
+      attestations: { ragDocsPlacedAt: null, stagingConfirmedAt: null, sandboxAttestedAt: null },
+      configWarnings: [],
+    });
+  });
+
+  it('adapter must match kind: WIDGET <=> kind WIDGET', async () => {
+    const { svc } = setup();
+    await expect(svc.create({ ...baseDto, adapter: 'WIDGET' }, actor)).rejects.toThrow(/adapter WIDGET/);
+    await expect(svc.create({ ...baseDto, kind: 'WIDGET', widgetConfig: widgetCfg }, actor)).rejects.toThrow(/adapter WIDGET/);
+    await expect(svc.create({ ...baseDto, kind: 'WIDGET', adapter: 'WIDGET', widgetConfig: widgetCfg }, actor)).resolves.toBeDefined();
+  });
+
+  it('AGENT: only STAGING; defaults to STAGING; PRODUCTION is rejected (400)', async () => {
+    const { svc, prisma } = setup();
+    await expect(svc.create({ ...baseDto, kind: 'AGENT', environment: 'PRODUCTION' }, actor)).rejects.toThrow(/STAGING/);
+    expect(prisma.aiTarget.create).not.toHaveBeenCalled();
+    await svc.create({ ...baseDto, kind: 'AGENT' }, actor);
+    expect((prisma.aiTarget.create.mock.calls[0][0] as { data: Loose }).data.environment).toBe('STAGING');
+  });
+
+  it('configs are only allowed for their kind and required for RAG / WIDGET', async () => {
+    const { svc } = setup();
+    await expect(svc.create({ ...baseDto, ragConfig: ragAuto }, actor)).rejects.toThrow(/only allowed for kind RAG/);
+    await expect(svc.create({ ...baseDto, agentConfig: {} }, actor)).rejects.toThrow(/only allowed for kind AGENT/);
+    await expect(svc.create({ ...baseDto, widgetConfig: widgetCfg }, actor)).rejects.toThrow(/only allowed for kind WIDGET/);
+    await expect(svc.create({ ...baseDto, kind: 'RAG' }, actor)).rejects.toThrow(/ragConfig is required/);
+    await expect(svc.create({ ...baseDto, kind: 'WIDGET', adapter: 'WIDGET' }, actor)).rejects.toThrow(/widgetConfig is required/);
+  });
+
+  it('RAG AUTO without delete creates the target with a warning; MANUAL needs no ingest', async () => {
+    const { svc } = setup();
+    const noDelete = { ...ragAuto, delete: undefined };
+    const v = await svc.create({ ...baseDto, kind: 'RAG', ragConfig: noDelete }, actor);
+    expect(v.configWarnings.join(' ')).toMatch(/delete/);
+    expect(v.ragConfig).toMatchObject({ mode: 'AUTO' });
+    await expect(svc.create({ ...baseDto, kind: 'RAG', ragConfig: { mode: 'MANUAL' } }, actor)).resolves.toBeDefined();
+  });
+
+  it('RAG AUTO requires ingest; unknown keys, bad methods and delay > limit are rejected', async () => {
+    const { svc } = setup();
+    const t = (cfg: Anyobj) => svc.create({ ...baseDto, kind: 'RAG', ragConfig: cfg }, actor);
+    await expect(t({ mode: 'AUTO' })).rejects.toThrow(/ingest is required/);
+    await expect(t({ ...ragAuto, extra: 1 })).rejects.toThrow(BadRequestException);
+    await expect(t({ ...ragAuto, ingest: { ...ragAuto.ingest, method: 'GET' } })).rejects.toThrow(BadRequestException);
+    await expect(t({ ...ragAuto, indexingDelayMs: 60_001 })).rejects.toThrow(BadRequestException);
+    await expect(t({ ...ragAuto, ingest: { ...ragAuto.ingest, docIdPath: 'a b;c' } })).rejects.toThrow(BadRequestException);
+  });
+
+  it('RAG: URLs must stay on the verified host, https, 443, no credentials; ingest/delete are SSRF-checked', async () => {
+    const { svc, ssrf, prisma } = setup();
+    const t = (ingestUrl: string, deleteUrl = ragAuto.delete.url) =>
+      svc.create({ ...baseDto, kind: 'RAG', ragConfig: { ...ragAuto, ingest: { ...ragAuto.ingest, url: ingestUrl }, delete: { ...ragAuto.delete, url: deleteUrl } } }, actor);
+    await expect(t('https://other.example.org/docs')).rejects.toThrow(/verified endpoint host/);
+    await expect(t('http://chat.example.com/docs')).rejects.toThrow(/https/);
+    await expect(t('https://chat.example.com:8443/docs')).rejects.toThrow(/443/);
+    await expect(t('https://u:p@chat.example.com/docs')).rejects.toThrow(/credentials/);
+    await expect(t('https://chat.example.com/docs', 'https://169.254.169.254/x')).rejects.toThrow(/verified endpoint host/);
+    expect(prisma.aiTarget.create).not.toHaveBeenCalled();
+    ssrf.resolveSafe.mockClear();
+    await t('https://chat.example.com/docs');
+    expect(ssrf.resolveSafe.mock.calls.map((c) => c[0])).toEqual(expect.arrayContaining(['chat.example.com']));
+    expect(ssrf.resolveSafe.mock.calls.length).toBeGreaterThanOrEqual(3); // endpoint + ingest + delete
+  });
+
+  it('RAG: SSRF failure of the ingest host (DNS pointing inside) is rejected', async () => {
+    const calls: string[] = [];
+    const { svc } = setup({
+      resolveSafe: vi.fn().mockImplementation((h: string) => {
+        calls.push(h);
+        return calls.length > 1 ? Promise.reject(new BadRequestException('internal address')) : Promise.resolve([]);
+      }),
+    });
+    await expect(svc.create({ ...baseDto, kind: 'RAG', ragConfig: ragAuto }, actor)).rejects.toThrow('internal address');
+  });
+
+  it('RAG/Agent/Widget templates: forbidden keys, depth and size are rejected', async () => {
+    const { svc } = setup();
+    await expect(
+      svc.create({ ...baseDto, kind: 'RAG', ragConfig: { ...ragAuto, ingest: { ...ragAuto.ingest, bodyTemplate: { a: { tools: [] } } } } }, actor),
+    ).rejects.toThrow(/forbidden key/);
+    await expect(
+      svc.create({ ...baseDto, kind: 'RAG', ragConfig: { ...ragAuto, ingest: { ...ragAuto.ingest, bodyTemplate: { a: { b: { c: { d: { e: { f: 1 } } } } } } } } }, actor),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      svc.create({ ...baseDto, kind: 'RAG', ragConfig: { ...ragAuto, ingest: { ...ragAuto.ingest, bodyTemplate: { text: 'x'.repeat(5000) } } } }, actor),
+    ).rejects.toThrow(/exceeds/);
+  });
+
+  it('AGENT config: header name/value together, forbidden header names rejected, path syntax checked', async () => {
+    const { svc } = setup();
+    const t = (cfg: Anyobj) => svc.create({ ...baseDto, kind: 'AGENT', agentConfig: cfg }, actor);
+    await expect(t({ dryRunHeaderName: 'X-Dry-Run', dryRunHeaderValue: 'true', toolCallsPath: 'tool_calls' })).resolves.toMatchObject({ configWarnings: [] });
+    await expect(t({ dryRunHeaderName: 'X-Dry-Run' })).rejects.toThrow(/together/);
+    await expect(t({ dryRunHeaderName: 'Host', dryRunHeaderValue: 'x' })).rejects.toThrow(BadRequestException);
+    await expect(t({ dryRunHeaderName: 'X-A', dryRunHeaderValue: 'a\r\nX-B: c' })).rejects.toThrow(BadRequestException);
+    await expect(t({ toolCallsPath: 'a;b' })).rejects.toThrow(BadRequestException);
+    await expect(t({ unknown: 1 })).rejects.toThrow(BadRequestException);
+    // no dry-run header is allowed but warned about
+    expect((await svc.create({ ...baseDto, kind: 'AGENT' }, actor)).configWarnings.join(' ')).toMatch(/dry-run/);
+  });
+
+  it('WIDGET config: host must equal the verified endpoint host, selectors bounded, timeouts limited', async () => {
+    const { svc, ssrf } = setup();
+    const t = (cfg: Anyobj) => svc.create({ ...baseDto, kind: 'WIDGET', adapter: 'WIDGET', widgetConfig: cfg }, actor);
+    await expect(t(widgetCfg)).resolves.toMatchObject({ kind: 'WIDGET', adapter: 'WIDGET' });
+    await expect(t({ ...widgetCfg, pageUrl: 'https://evil.example.org/p' })).rejects.toThrow(/verified endpoint host/);
+    await expect(t({ ...widgetCfg, pageUrl: 'http://chat.example.com/p' })).rejects.toThrow(/https/);
+    await expect(t({ ...widgetCfg, inputSelector: 'x'.repeat(201) })).rejects.toThrow(BadRequestException);
+    await expect(t({ ...widgetCfg, responseTimeoutMs: 60_001 })).rejects.toThrow(BadRequestException);
+    await expect(t({ ...widgetCfg, waitAfterOpenMs: 15_001 })).rejects.toThrow(BadRequestException);
+    await expect(t({ pageUrl: widgetCfg.pageUrl, inputSelector: '#in' })).rejects.toThrow(BadRequestException);
+    ssrf.resolveSafe.mockRejectedValue(new BadRequestException('internal address'));
+    await expect(t(widgetCfg)).rejects.toThrow('internal address');
+  });
+});
+
+describe('kind configuration (update) and attestation reset', () => {
+  const attested = {
+    ragDocsPlacedAt: new Date(),
+    stagingConfirmedAt: new Date(),
+    sandboxAttestedAt: new Date(),
+  };
+  const agentRow = () => row({ kind: 'AGENT', environment: 'STAGING', ...attested });
+  const ragRow = () => row({ kind: 'RAG', ragConfig: { mode: 'MANUAL' }, ...attested });
+  const dataOf = (prisma: ReturnType<typeof setup>['prisma']) => (prisma.aiTarget.update.mock.calls[0][0] as { data: Loose }).data;
+
+  it('AGENT cannot be moved to PRODUCTION (400) and nothing is written', async () => {
+    const { svc, prisma } = setup();
+    prisma.aiTarget.findFirst.mockResolvedValue(agentRow());
+    await expect(svc.update('ai1', { environment: 'PRODUCTION' }, actor)).rejects.toThrow(/STAGING/);
+    expect(prisma.aiTarget.update).not.toHaveBeenCalled();
+  });
+
+  it('changing the kind to AGENT while PRODUCTION is rejected; changing adapter without kind is rejected for WIDGET', async () => {
+    const { svc, prisma } = setup();
+    await expect(svc.update('ai1', { kind: 'AGENT' }, actor)).rejects.toThrow(/STAGING/);
+    await expect(svc.update('ai1', { adapter: 'WIDGET' }, actor)).rejects.toThrow(/adapter WIDGET/);
+    prisma.aiTarget.update.mockClear();
+    await svc.update('ai1', { kind: 'AGENT', environment: 'STAGING' }, actor);
+    expect(dataOf(prisma)).toMatchObject({ kind: 'AGENT', environment: 'STAGING', stagingConfirmedAt: null, sandboxAttestedAt: null, ragDocsPlacedAt: null });
+  });
+
+  it.each([
+    ['environment', { environment: 'STAGING' as const }, { ragDocsPlacedAt: false, staging: true }],
+    ['agentConfig', { agentConfig: { dryRunHeaderName: 'X-Dry', dryRunHeaderValue: '1' } }, { ragDocsPlacedAt: false, staging: true }],
+    ['endpointUrl', { endpointUrl: 'https://chat.example.com/v9' }, { ragDocsPlacedAt: true, staging: true }],
+    ['adapter', { adapter: 'ANTHROPIC' as const }, { ragDocsPlacedAt: false, staging: true }],
+    ['apiKey', { apiKey: 'sk-other' }, { ragDocsPlacedAt: false, staging: true }],
+  ])('AGENT: changing %s resets the right attestations', async (_n, dto, expected) => {
+    const { svc, prisma } = setup();
+    prisma.aiTarget.findFirst.mockResolvedValue(agentRow());
+    await svc.update('ai1', dto, actor);
+    const d = dataOf(prisma);
+    expect(d.ragDocsPlacedAt === null).toBe(expected.ragDocsPlacedAt);
+    expect(d.stagingConfirmedAt === null).toBe(expected.staging);
+    expect(d.sandboxAttestedAt === null).toBe(expected.staging);
+  });
+
+  it('RAG: changing ragConfig clears ragDocsPlacedAt but not the agent attestations; rename resets nothing', async () => {
+    const { svc, prisma } = setup();
+    prisma.aiTarget.findFirst.mockResolvedValue(ragRow());
+    await svc.update('ai1', { ragConfig: { mode: 'MANUAL', indexingDelayMs: 100 } }, actor);
+    const d = dataOf(prisma);
+    expect(d.ragDocsPlacedAt).toBeNull();
+    expect(d.stagingConfirmedAt).toBeUndefined();
+    prisma.aiTarget.update.mockClear();
+    await svc.update('ai1', { name: 'Renamed' }, actor);
+    const d2 = dataOf(prisma);
+    expect(d2.ragDocsPlacedAt).toBeUndefined();
+    expect(d2.kind).toBeUndefined();
+  });
+
+  it('RAG: changing the endpoint host revalidates the stored ragConfig (host mismatch is rejected)', async () => {
+    const { svc, prisma } = setup();
+    prisma.aiTarget.findFirst.mockResolvedValue(row({ kind: 'RAG', ragConfig: ragAuto }));
+    await expect(svc.update('ai1', { endpointUrl: 'https://other.example.org/chat' }, actor)).rejects.toThrow(/verified endpoint host/);
+    expect(prisma.aiTarget.update).not.toHaveBeenCalled();
+  });
+
+  it('kind changes drop the configs of the old kind', async () => {
+    const { svc, prisma } = setup();
+    prisma.aiTarget.findFirst.mockResolvedValue(row({ kind: 'RAG', ragConfig: ragAuto }));
+    await svc.update('ai1', { kind: 'CHAT' }, actor);
+    const d = dataOf(prisma);
+    expect(String(d.ragConfig)).toMatch(/DbNull|null/i);
+  });
+
+  it('config reset also resets runs (kind/environment/*Config are config fields)', async () => {
+    const { svc, prisma } = setup();
+    prisma.aiTarget.findFirst.mockResolvedValue(agentRow());
+    await svc.update('ai1', { agentConfig: { toolCallsPath: 'calls' } }, actor);
+    expect(prisma.arenaRun.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'DRAFT', roeId: null }) }));
+    prisma.arenaRun.count.mockResolvedValue(1);
+    await expect(svc.update('ai1', { agentConfig: { toolCallsPath: 'calls2' } }, actor)).rejects.toThrow(ConflictException);
+  });
+});
+
+describe('attestations', () => {
+  const rag = () => row({ kind: 'RAG', ragConfig: { mode: 'MANUAL' } });
+  const agent = (o: Anyobj = {}) => row({ kind: 'AGENT', environment: 'STAGING', ...o });
+
+  it('sets timestamps then writes the strict audit record (in that order)', async () => {
+    const { svc, prisma } = setup();
+    prisma.aiTarget.findFirst.mockResolvedValue(agent());
+    const order: string[] = [];
+    prisma.aiTarget.update.mockImplementation(() => {
+      order.push('update');
+      return Promise.resolve(agent({ stagingConfirmedAt: new Date('2026-10-13T00:00:00Z'), sandboxAttestedAt: new Date('2026-10-13T00:00:00Z') }));
+    });
+    const audit = (svc as unknown as { audit: { logStrict: ReturnType<typeof vi.fn> } }).audit;
+    audit.logStrict = vi.fn().mockImplementation(() => {
+      order.push('audit');
+      return Promise.resolve();
+    });
+    const v = await svc.attest('ai1', { stagingConfirmed: true, sandboxAttested: true }, actor);
+    expect(order).toEqual(['update', 'audit']);
+    expect(audit.logStrict).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'arena.target.attested', organizationId: 'org1', resourceId: 'ai1', metadata: expect.objectContaining({ attestations: ['stagingConfirmed', 'sandboxAttested'] }) }),
+    );
+    expect(v.attestations.stagingConfirmedAt).toBe('2026-10-13T00:00:00.000Z');
+  });
+
+  it('a failing audit write rolls the attestation back and answers 409 AUDIT_FAILED', async () => {
+    const { svc, prisma } = setup();
+    const prev = new Date('2026-09-01T00:00:00Z');
+    prisma.aiTarget.findFirst.mockResolvedValue(agent({ sandboxAttestedAt: prev }));
+    prisma.aiTarget.update.mockResolvedValue(agent());
+    (svc as unknown as { audit: { logStrict: unknown } }).audit.logStrict = vi.fn().mockRejectedValue(new Error('down'));
+    const err = await svc.attest('ai1', { sandboxAttested: true }, actor).catch((e: unknown) => e);
+    expect((err as ConflictException).getResponse()).toMatchObject({ code: 'AUDIT_FAILED' });
+    expect(prisma.aiTarget.update).toHaveBeenLastCalledWith({ where: { id: 'ai1' }, data: { sandboxAttestedAt: prev } });
+  });
+
+  it('validates applicability: ragDocsPlaced only RAG; staging/sandbox only AGENT; staging needs STAGING; empty is 400', async () => {
+    const { svc, prisma } = setup();
+    await expect(svc.attest('ai1', {}, actor)).rejects.toThrow(/No attestation/);
+    await expect(svc.attest('ai1', { ragDocsPlaced: true }, actor)).rejects.toThrow(/RAG targets only/);
+    await expect(svc.attest('ai1', { sandboxAttested: true }, actor)).rejects.toThrow(/AGENT targets only/);
+    prisma.aiTarget.findFirst.mockResolvedValue(agent({ environment: 'PRODUCTION' }));
+    await expect(svc.attest('ai1', { stagingConfirmed: true }, actor)).rejects.toThrow(/STAGING/);
+    prisma.aiTarget.findFirst.mockResolvedValue(rag());
+    await expect(svc.attest('ai1', { ragDocsPlaced: true }, actor)).resolves.toBeDefined();
+    expect(prisma.aiTarget.update).toHaveBeenCalledWith(expect.objectContaining({ data: { ragDocsPlacedAt: expect.any(Date) } }));
+  });
+
+  it('foreign organization → 404 and nothing is written', async () => {
+    const { svc, prisma } = setup();
+    prisma.aiTarget.findFirst.mockResolvedValue(null);
+    await expect(svc.attest('ai1', { ragDocsPlaced: true }, { ...actor, organizationId: 'other' })).rejects.toThrow(NotFoundException);
+    expect(prisma.aiTarget.update).not.toHaveBeenCalled();
   });
 });

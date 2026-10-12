@@ -70,7 +70,7 @@ describe('adapters', () => {
   it('OPENAI_COMPAT posts messages with Bearer auth through SafeHttpService on port 443', async () => {
     const { http, calls } = fakeHttp([ok({ choices: [{ message: { content: 'hello' } }] })]);
     const { clock } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(
       target('OPENAI_COMPAT', { authHeaderName: 'Authorization', requestMapping: { model: 'm1' } }),
       { apiKey: 'sk-test-secret-key-0000' },
       { clock, requestsPerSecond: 5 },
@@ -91,7 +91,7 @@ describe('adapters', () => {
   it('ANTHROPIC uses x-api-key and content[].text', async () => {
     const { http, calls } = fakeHttp([ok({ content: [{ type: 'text', text: 'hi' }, { type: 'text', text: 'there' }] })]);
     const { clock } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(target('ANTHROPIC'), { apiKey: 'k-1' }, { clock });
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(target('ANTHROPIC'), { apiKey: 'k-1' }, { clock });
     const res = await adapter.send('ping');
     expect(res.text).toBe('hi\nthere');
     expect(calls[0].opts.headers?.['x-api-key']).toBe('k-1');
@@ -104,7 +104,7 @@ describe('adapters', () => {
   it('GENERIC_JSON maps prompt and reply via JSON paths', async () => {
     const { http, calls } = fakeHttp([ok({ data: { reply: 'yo' } })]);
     const { clock } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(
       target('GENERIC_JSON', {
         authHeaderName: 'X-Token',
         requestMapping: { promptPath: 'input.text', template: { lang: 'de' } },
@@ -122,7 +122,7 @@ describe('adapters', () => {
   it('rejects header injection in auth header configuration', async () => {
     const { http, request } = fakeHttp([ok({})]);
     const { clock } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(
       target('GENERIC_JSON', { authHeaderName: 'X-A\r\nEvil: 1' }),
       { apiKey: 'abc' },
       { clock },
@@ -135,7 +135,7 @@ describe('adapters', () => {
     const long = 'a'.repeat(ARENA_LIMITS.maxResponseChars + 500);
     const { http } = fakeHttp([ok({ choices: [{ message: { content: long } }] })]);
     const { clock } = fakeClock();
-    const res = await new AdapterFactory(http).forTarget(target('OPENAI_COMPAT'), {}, { clock }).send('x');
+    const res = await new AdapterFactory(http, {} as never, {} as never).forTarget(target('OPENAI_COMPAT'), {}, { clock }).send('x');
     expect(res.text.length).toBe(ARENA_LIMITS.maxResponseChars);
   });
 
@@ -146,7 +146,7 @@ describe('adapters', () => {
       ok({ choices: [{ message: { content: 'finally' } }] }),
     ]);
     const { clock, sleeps } = fakeClock();
-    const res = await new AdapterFactory(http).forTarget(target('OPENAI_COMPAT'), {}, { clock, requestsPerSecond: 5 }).send('x');
+    const res = await new AdapterFactory(http, {} as never, {} as never).forTarget(target('OPENAI_COMPAT'), {}, { clock, requestsPerSecond: 5 }).send('x');
     expect(res.text).toBe('finally');
     expect(res.requests).toBe(3);
     expect(request).toHaveBeenCalledTimes(3);
@@ -156,7 +156,7 @@ describe('adapters', () => {
   it('does not retry other 4xx and surfaces a TargetRequestError', async () => {
     const { http, request } = fakeHttp([ok('nope', 401)]);
     const { clock } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(target('OPENAI_COMPAT'), {}, { clock });
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(target('OPENAI_COMPAT'), {}, { clock });
     await expect(adapter.send('x')).rejects.toMatchObject({ name: 'TargetRequestError', kind: 'http', status: 401 });
     expect(request).toHaveBeenCalledTimes(1);
   });
@@ -164,7 +164,7 @@ describe('adapters', () => {
   it('enforces requestsPerSecond between requests', async () => {
     const { http } = fakeHttp([ok({ choices: [{ message: { content: 'a' } }] })]);
     const { clock, sleeps } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(target('OPENAI_COMPAT'), {}, { clock, requestsPerSecond: 2 });
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(target('OPENAI_COMPAT'), {}, { clock, requestsPerSecond: 2 });
     await adapter.send('1');
     await adapter.send('2');
     expect(sleeps).toContain(500);
@@ -173,7 +173,7 @@ describe('adapters', () => {
   it('aborts with ErrorRateExceededError when >= 50% of the last 6 requests failed', async () => {
     const { http } = fakeHttp([ok('boom', 500)]);
     const { clock } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(target('OPENAI_COMPAT'), {}, { clock });
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(target('OPENAI_COMPAT'), {}, { clock });
     await expect(adapter.send('1')).rejects.toBeInstanceOf(TargetRequestError); // 4 failures
     await expect(adapter.send('2')).rejects.toBeInstanceOf(ErrorRateExceededError); // 6th failure
     await expect(adapter.send('3').catch((e) => e)).resolves.toBeInstanceOf(RunStopError);
@@ -182,7 +182,7 @@ describe('adapters', () => {
   it('calls beforeRequest before every HTTP request (kill-switch hook) and stops when it throws', async () => {
     const { http, request } = fakeHttp([ok('x', 500), ok({ choices: [{ message: { content: 'ok' } }] })]);
     const { clock } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(target('OPENAI_COMPAT'), {}, { clock });
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(target('OPENAI_COMPAT'), {}, { clock });
     const hook = vi.fn(async () => undefined);
     await adapter.send('x', { beforeRequest: hook });
     expect(hook).toHaveBeenCalledTimes(2);
@@ -198,7 +198,7 @@ describe('adapters', () => {
   it('treats SSRF/validation refusals as fatal and never retries', async () => {
     const { http, request } = fakeHttp([new BadRequestException('Resolved to a private address')]);
     const { clock } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(target('OPENAI_COMPAT'), {}, { clock });
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(target('OPENAI_COMPAT'), {}, { clock });
     await expect(adapter.send('x')).rejects.toBeInstanceOf(TargetUnsafeError);
     expect(request).toHaveBeenCalledTimes(1);
   });
@@ -206,7 +206,7 @@ describe('adapters', () => {
   it('fails with a parse error on malformed responses', async () => {
     const { http } = fakeHttp([ok('<html>not json</html>')]);
     const { clock } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(target('OPENAI_COMPAT'), {}, { clock });
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(target('OPENAI_COMPAT'), {}, { clock });
     await expect(adapter.send('x')).rejects.toMatchObject({ kind: 'parse' });
   });
 
@@ -214,7 +214,7 @@ describe('adapters', () => {
     for (const name of ['Host', 'Content-Length', 'Transfer-Encoding', 'Connection', 'Proxy-Authorization', '1Bad', 'X Bad', 'a'.repeat(70)]) {
       const { http, request } = fakeHttp([ok({})]);
       const { clock } = fakeClock();
-      const adapter = new AdapterFactory(http).forTarget(target('GENERIC_JSON', { authHeaderName: name }), {}, { clock });
+      const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(target('GENERIC_JSON', { authHeaderName: name }), {}, { clock });
       await expect(adapter.send('x'), name).rejects.toBeInstanceOf(TargetUnsafeError);
       expect(request).not.toHaveBeenCalled();
     }
@@ -233,13 +233,13 @@ describe('adapters', () => {
     for (const requestMapping of bad) {
       const { http, request } = fakeHttp([ok({})]);
       const { clock } = fakeClock();
-      const adapter = new AdapterFactory(http).forTarget(target('GENERIC_JSON', { requestMapping }), {}, { clock });
+      const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(target('GENERIC_JSON', { requestMapping }), {}, { clock });
       await expect(adapter.send('x')).rejects.toBeInstanceOf(TargetUnsafeError);
       expect(request).not.toHaveBeenCalled();
     }
     const { http, request } = fakeHttp([ok({})]);
     const { clock } = fakeClock();
-    const oa = new AdapterFactory(http).forTarget(target('OPENAI_COMPAT', { requestMapping: { extra: { tools: [{}] } } }), {}, { clock });
+    const oa = new AdapterFactory(http, {} as never, {} as never).forTarget(target('OPENAI_COMPAT', { requestMapping: { extra: { tools: [{}] } } }), {}, { clock });
     await expect(oa.send('x')).rejects.toBeInstanceOf(TargetUnsafeError);
     expect(request).not.toHaveBeenCalled();
   });
@@ -247,7 +247,7 @@ describe('adapters', () => {
   it('accepts a small, safe template', async () => {
     const { http, calls } = fakeHttp([ok({ text: 'k' })]);
     const { clock } = fakeClock();
-    const adapter = new AdapterFactory(http).forTarget(
+    const adapter = new AdapterFactory(http, {} as never, {} as never).forTarget(
       target('GENERIC_JSON', { requestMapping: { template: { lang: 'de', opts: { a: 1 } } } }),
       {},
       { clock },

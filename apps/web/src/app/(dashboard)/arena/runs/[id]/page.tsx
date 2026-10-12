@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { RunStatusBadge } from '@/components/arena/badges';
+import { KindBadge, RunStatusBadge } from '@/components/arena/badges';
 import { Scoreboard } from '@/components/arena/scoreboard';
 import { LiveArena } from '@/components/arena/live-arena';
 import { RecommendationsPanel } from '@/components/arena/recommendations-panel';
@@ -28,6 +28,7 @@ import { useArenaRun } from '@/hooks/use-arena-run';
 import { useArenaRole } from '@/hooks/use-arena-role';
 import { apiClient } from '@/lib/api-client';
 import { runActions } from '@/lib/arena-logic';
+import { kindOf, ragCleanupText } from '@/lib/arena-kinds';
 import type {
   AiTargetView,
   ArenaRecommendation,
@@ -43,6 +44,7 @@ export default function ArenaRunPage() {
 
   const [run, setRun] = useState<ArenaRunDetail | null>(null);
   const [targets, setTargets] = useState<AiTargetView[]>([]);
+  const [targetsLoaded, setTargetsLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -64,8 +66,14 @@ export default function ArenaRunPage() {
     void load();
     apiClient
       .get<AiTargetView[]>('/arena/targets')
-      .then(setTargets)
-      .catch(() => setTargets([]));
+      .then((t) => {
+        setTargets(t);
+        setTargetsLoaded(true);
+      })
+      .catch(() => {
+        setTargets([]);
+        setTargetsLoaded(true);
+      });
   }, [load]);
 
   const status = run?.status ?? null;
@@ -85,10 +93,14 @@ export default function ArenaRunPage() {
     return [...m.values()].sort((a, b) => a.priority - b.priority);
   }, [run?.recommendations, live.recommendations]);
 
-  const projectId = useMemo(
-    () => targets.find((t) => t.id === run?.aiTargetId)?.projectId ?? null,
+  const aiTarget = useMemo(
+    () => targets.find((t) => t.id === run?.aiTargetId) ?? null,
     [targets, run?.aiTargetId],
   );
+  const projectId = aiTarget?.projectId ?? null;
+  const kind = kindOf(aiTarget);
+  const ragStatus = run?.artifactsSummary?.rag;
+  const agentSummary = run?.artifactsSummary?.agent;
 
   const findingIds = useMemo(() => {
     const set = new Set<string>(live.findingIds);
@@ -148,6 +160,7 @@ export default function ArenaRunPage() {
           <h1 className="text-2xl font-bold flex flex-wrap items-center gap-3 mt-1">
             Duell: {run.targetName}
             <RunStatusBadge status={effectiveStatus} />
+            <KindBadge kind={kind} />
           </h1>
           <p className="text-sm text-muted-foreground">
             {run.goalCount} Ziele · bis zu {run.maxRounds} Runden · Budget {run.maxRequests} Requests
@@ -241,7 +254,31 @@ export default function ArenaRunPage() {
         </div>
       )}
 
-      {actions.canApprove && <ApprovalPanel run={run} onDone={() => void load()} />}
+      {actions.canApprove && targetsLoaded && (
+        <ApprovalPanel run={run} kind={kind} onDone={() => void load()} />
+      )}
+
+      {kind === 'WIDGET' && (
+        <div className="rounded-md border border-cyan-600/40 bg-cyan-600/10 p-3 text-sm" data-testid="widget-hint">
+          Web-Widget-Test: PTaaS steuert eine automatisierte Browsersitzung ausschließlich auf der verifizierten Domain.
+          Andere Hosts werden blockiert. Antworten werden nur als Text gelesen.
+        </div>
+      )}
+      {kind === 'AGENT' && (
+        <div className="rounded-md border border-orange-500/50 bg-orange-500/10 p-3 text-sm" data-testid="agent-hint">
+          Agent-Test (nur Staging): Die Marker-Argumente sind wirkungslos, Tools müssen sandboxed oder im Dry-Run sein.
+          {agentSummary && <> Bisher beobachtete Tool-Aufrufe: {agentSummary.toolCallsObserved}.</>}
+        </div>
+      )}
+      {kind === 'RAG' && ragStatus && (
+        <div
+          data-testid="rag-cleanup"
+          className={`rounded-md border p-3 text-sm ${ragCleanupText(ragStatus).tone === 'warn' ? 'border-yellow-500/60 bg-yellow-500/10' : 'border-purple-600/40 bg-purple-600/10'}`}
+        >
+          <span className="font-medium">RAG-Testdokumente: </span>
+          {ragCleanupText(ragStatus).text}
+        </div>
+      )}
 
       {run.approvedByName && run.approvedAt && (
         <p className="text-xs text-muted-foreground">

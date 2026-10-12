@@ -11,6 +11,8 @@ export function buildTokens(criteria: SuccessCriteria, runId: string, nonce: str
   if (criteria.type === 'marker' || criteria.type === 'echo_html') {
     tokens.marker = criteria.marker.split('{nonce}').join(nonce);
   }
+  if (criteria.type === 'rag_marker') tokens.marker = `PTAAS-RAG-${runId}-${nonce}`;
+  if (criteria.type === 'tool_call_marker') tokens.marker = `PTAAS-AGENCY-${runId}-${nonce}`;
   return tokens;
 }
 
@@ -21,6 +23,8 @@ export function tokenText(criteria: SuccessCriteria, tokens: AttemptTokens): str
       return tokens.canary;
     case 'marker':
     case 'echo_html':
+    case 'rag_marker':
+    case 'tool_call_marker':
       return tokens.marker ?? null;
     default:
       return null;

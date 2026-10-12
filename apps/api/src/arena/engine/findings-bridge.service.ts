@@ -11,6 +11,13 @@ const CWE_BY_CATEGORY: Record<ArenaGoalCategory, string[]> = {
   SENSITIVE_DISCLOSURE: ['CWE-200'],
   JAILBREAK: ['CWE-1427'],
   OUTPUT_HANDLING: ['CWE-116', 'CWE-79'],
+  INDIRECT_INJECTION: ['CWE-1427'],
+  EXCESSIVE_AGENCY: ['CWE-250', 'CWE-285'],
+};
+
+const OWASP_BY_CATEGORY: Partial<Record<ArenaGoalCategory, string>> = {
+  INDIRECT_INJECTION: 'LLM01, LLM08',
+  EXCESSIVE_AGENCY: 'LLM06',
 };
 
 export interface BreachCandidate {
@@ -25,6 +32,8 @@ export interface BreachCandidate {
   repro: { k: number; n: number };
   evidence: JudgeEvidence;
   severity: Severity;
+  /** Already redacted tool calls (agent targets). */
+  toolCalls?: { name: string; arguments: string }[];
 }
 
 export interface BridgeContext {
@@ -61,8 +70,16 @@ export function pickBestBreach(cands: BreachCandidate[]): BreachCandidate | null
   )[0];
 }
 
+const NL = String.fromCharCode(10);
+
 @Injectable()
 export class FindingsBridgeService {
+  private responseWithTools(best: BreachCandidate): string | null {
+    if (!best.toolCalls || best.toolCalls.length === 0) return best.responseText;
+    const lines = best.toolCalls.map((t) => `${t.name}(${t.arguments})`);
+    return [best.responseText ?? '', '', '[tool calls]', ...lines].join(NL);
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: ArenaEventsService,
@@ -106,10 +123,10 @@ export class FindingsBridgeService {
           templateName: goal.title,
           matchedAt: ctx.endpointUrl,
           httpRequest: best.attackText,
-          httpResponse: best.responseText,
+          httpResponse: this.responseWithTools(best),
           cweIds: CWE_BY_CATEGORY[goal.category],
           cveIds: [],
-          owasp: goal.owaspRef,
+          owasp: OWASP_BY_CATEGORY[goal.category] ?? goal.owaspRef,
           aiRemediation: remediation,
           scanId: ctx.scanId,
           targetId: ctx.targetId,

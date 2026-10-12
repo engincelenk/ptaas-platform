@@ -21,7 +21,7 @@ export function stripHopByHopHeaders(headers: Record<string, string>): Record<st
 }
 
 export interface SafeRequestOptions {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   headers?: Record<string, string>;
   body?: string;
   timeoutMs?: number;      // default 10 000
@@ -40,7 +40,7 @@ export interface PinnedRequest {
   url: URL;
   ip: string;
   family: 4 | 6;
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   headers: Record<string, string>;
   body?: string;
   timeoutMs: number;

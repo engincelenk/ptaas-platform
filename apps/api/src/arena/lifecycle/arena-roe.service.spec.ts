@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'crypto';
-import { ArenaRoeService, CURRENT_ROE_VERSION, ROE_V1_CONTENT, hashRoe } from './arena-roe.service';
+import { ArenaRoeService, CURRENT_ROE_VERSION, ROE_V1_CONTENT, ROE_V2_CONTENT, hashRoe } from './arena-roe.service';
 
 describe('ArenaRoeService', () => {
   it('hash is SHA-256 hex of the content', () => {
@@ -14,15 +14,32 @@ describe('ArenaRoeService', () => {
     }
   });
 
-  it('onModuleInit upserts version 1 with an empty update (immutable)', async () => {
-    const upsert = vi.fn().mockResolvedValue({ id: 'r1', version: 1, content: ROE_V1_CONTENT, contentHash: hashRoe(ROE_V1_CONTENT) });
+  it('current version is 2; onModuleInit upserts v1 (kept) and v2 with empty updates (immutable)', async () => {
+    expect(CURRENT_ROE_VERSION).toBe(2);
+    const upsert = vi.fn().mockImplementation(({ create }: { create: { version: number; content: string; contentHash: string } }) =>
+      Promise.resolve({ id: `r${create.version}`, ...create }),
+    );
     const svc = new ArenaRoeService({ arenaRoe: { upsert, findFirst: vi.fn() } } as never);
     await svc.onModuleInit();
     expect(upsert).toHaveBeenCalledWith({
-      where: { version: CURRENT_ROE_VERSION },
+      where: { version: 1 },
       create: { version: 1, content: ROE_V1_CONTENT, contentHash: hashRoe(ROE_V1_CONTENT) },
       update: {},
     });
+    expect(upsert).toHaveBeenCalledWith({
+      where: { version: 2 },
+      create: { version: 2, content: ROE_V2_CONTENT, contentHash: hashRoe(ROE_V2_CONTENT) },
+      update: {},
+    });
+  });
+
+  it('v2 keeps v1 and adds RAG, agent and widget terms', () => {
+    expect(ROE_V2_CONTENT).toContain('VERSION 2');
+    expect(ROE_V2_CONTENT).toContain(ROE_V1_CONTENT.slice(ROE_V1_CONTENT.indexOf('1. Zweck')));
+    for (const needle of ['RAG-Anwendungen', 'Testdokumente', 'wieder entfernt', 'Staging', 'Dry-Run', 'wirkungslos', 'Browsersitzung', 'andere Hosts']) {
+      expect(ROE_V2_CONTENT).toContain(needle);
+    }
+    expect(hashRoe(ROE_V2_CONTENT)).not.toBe(hashRoe(ROE_V1_CONTENT));
   });
 
   it('onModuleInit never throws when the DB is unavailable', async () => {
@@ -34,9 +51,11 @@ describe('ArenaRoeService', () => {
     const row = { id: 'r2', version: 2, content: 'x', contentHash: 'h' };
     const a = new ArenaRoeService({ arenaRoe: { findFirst: vi.fn().mockResolvedValue(row), upsert: vi.fn() } } as never);
     expect(await a.getCurrent()).toEqual(row);
-    const upsert = vi.fn().mockResolvedValue({ id: 'r1', version: 1, content: ROE_V1_CONTENT, contentHash: hashRoe(ROE_V1_CONTENT) });
+    const upsert = vi.fn().mockImplementation(({ create }: { create: { version: number; content: string; contentHash: string } }) =>
+      Promise.resolve({ id: `r${create.version}`, ...create }),
+    );
     const b = new ArenaRoeService({ arenaRoe: { findFirst: vi.fn().mockResolvedValue(null), upsert } } as never);
-    expect((await b.getCurrent()).version).toBe(1);
+    expect((await b.getCurrent()).version).toBe(2);
     expect(upsert).toHaveBeenCalled();
   });
 });

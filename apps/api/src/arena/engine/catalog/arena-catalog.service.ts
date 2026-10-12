@@ -31,6 +31,7 @@ export class ArenaCatalogService implements OnModuleInit {
         baseSeverity: g.baseSeverity,
         seedAttacks: g.seedAttacks as Prisma.InputJsonValue,
         successCriteria: g.successCriteria as unknown as Prisma.InputJsonValue,
+        kinds: g.kinds,
         active: true,
       };
       await this.prisma.arenaGoal.upsert({ where: { key: g.key }, create: { key: g.key, ...data }, update: data });

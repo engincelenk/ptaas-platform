@@ -1,4 +1,5 @@
-import type { ArenaGoalCategory, Severity } from '@ptaas/db';
+import { STAGE2_RAG_GOALS, STAGE3_AGENT_GOALS } from './goals.stage2-4.data';
+import type { ArenaGoalCategory, ArenaTargetKind, Severity } from '@ptaas/db';
 import type { SuccessCriteria } from '../engine.types';
 
 export interface CatalogGoal {
@@ -10,6 +11,8 @@ export interface CatalogGoal {
   owaspRef: string;
   atlasRef: string;
   baseSeverity: Severity;
+  /** Target kinds this goal applies to. */
+  kinds: ArenaTargetKind[];
   /** `{{TOKEN}}` is replaced per attempt by the canary / marker / html snippet of the criteria. */
   seedAttacks: string[];
   successCriteria: SuccessCriteria;
@@ -19,7 +22,9 @@ export interface CatalogGoal {
  * Stage-1 attack catalog. ONLY harmless stand-in goals: emit a unique marker, reveal a canary or
  * known prompt fragments, emit inert markup. No harmful content of any kind (see forbidden-content.ts).
  */
-export const ARENA_GOAL_CATALOG: CatalogGoal[] = [
+const ALL_KINDS: ArenaTargetKind[] = ['CHAT', 'RAG', 'AGENT', 'WIDGET'];
+
+const BASE_GOALS: Array<Omit<CatalogGoal, 'kinds'>> = [
   // ---- Prompt injection (LLM01 / AML.T0051) ------------------------------------------------
   {
     key: 'PI-001',
@@ -296,4 +301,11 @@ export const ARENA_GOAL_CATALOG: CatalogGoal[] = [
     ],
     successCriteria: { type: 'echo_html', marker: '![ptaas](https://ptaas.invalid/PTAAS-IMG-{nonce}.png)' },
   },
+];
+
+
+export const ARENA_GOAL_CATALOG: CatalogGoal[] = [
+  ...BASE_GOALS.map((g) => ({ ...g, kinds: ALL_KINDS })),
+  ...STAGE2_RAG_GOALS,
+  ...STAGE3_AGENT_GOALS,
 ];

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   arenaLiveReducer,
   budgetPercent,
-  canSubmitApproval,
   clampInt,
   computeRates,
   deltaTone,
@@ -128,6 +127,18 @@ describe('arenaLiveReducer', () => {
     expect(s.status).toBe('COMPLETED');
   });
 
+  it('keeps tool calls on attempts as plain data', () => {
+    const s = arenaLiveReducer(initialLiveState, {
+      kind: 'event',
+      event: {
+        type: 'attempt',
+        attempt: attempt({ toolCalls: [{ name: 'lookup', arguments: '{"q":"<b>x</b>"}' }] }),
+      },
+    });
+    expect(s.attempts[0].toolCalls?.[0].name).toBe('lookup');
+    expect(s.attempts[0].toolCalls?.[0].arguments).toBe('{"q":"<b>x</b>"}');
+  });
+
   it('resets state', () => {
     const s = arenaLiveReducer(
       arenaLiveReducer(initialLiveState, { kind: 'attempts', attempts: [attempt()] }),
@@ -236,14 +247,6 @@ describe('role gating', () => {
     expect(parseRoleFromToken(`h.${payload}.s`)).toBe('ADMIN');
     expect(parseRoleFromToken('garbage')).toBeNull();
     expect(parseRoleFromToken(null)).toBeNull();
-  });
-
-  it('requires all four confirmations, contact and RoE version for approval', () => {
-    const all = { noProduction: true, noSideEffects: true, noTools: true, providerTosAccepted: true };
-    expect(canSubmitApproval(all, 'Max, 12345', 3)).toBe(true);
-    expect(canSubmitApproval({ ...all, noTools: false }, 'Max, 12345', 3)).toBe(false);
-    expect(canSubmitApproval(all, '   ', 3)).toBe(false);
-    expect(canSubmitApproval(all, 'Max, 12345', null)).toBe(false);
   });
 });
 

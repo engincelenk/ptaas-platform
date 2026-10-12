@@ -10,18 +10,24 @@ import { AiTargetsService } from '../lifecycle/ai-targets.service';
 import { ArenaScoreboardService } from '../lifecycle/arena-scoreboard.service';
 import { arenaUtcDayKey } from '../lifecycle/arena-views';
 import { AdapterFactory } from './adapters/adapter.factory';
+import { buildAuthHeaders } from './adapters/auth-headers';
+import { parseAgentConfig, AgentConfig } from './agent/agent-config';
+import { extractToolCalls } from './agent/tool-trace';
 import type { AdapterClock, AdapterResponse, ArenaTargetAdapter } from './adapters/adapter.types';
 import { parseSeedAttacks, parseSuccessCriteria } from './catalog/criteria';
-import { ENGINE_PROMPT_VERSIONS, JudgeResult, MAX_RUN_WALLCLOCK_MS } from './engine.types';
+import { ENGINE_PROMPT_VERSIONS, JudgeResult, MAX_RUN_WALLCLOCK_MS, ObservedToolCall } from './engine.types';
 import { BreachCandidate, FindingsBridgeService, pickBestBreach } from './findings-bridge.service';
 import { JudgeService } from './judge/judge.service';
 import { computeSeverity } from './judge/severity';
 import { RecommendationService, CategoryStats } from './recommendation.service';
-import { redactAttempt } from './redact-attempt';
+import { RagConfig, parseRagConfig } from './rag/rag-config';
+import { RagDoc, RagHttpContext, RagOperationError, RagPlanter } from './rag/rag-planter';
+import { redactAttempt, redactText } from './redact-attempt';
 import { buildTokens } from './red/attempt-tokens';
 import { LLM_CLIENT, LlmClient } from './red/llm-client';
 import { AttemptHistoryItem, RECON_PROMPTS, RedAgent } from './red/red-agent';
 import { RunStopError, TargetRequestError, TargetUnsafeError } from './run-control';
+import { BrowserUnavailableError } from './widget/widget.types';
 
 export const ARENA_COUNTER_REDIS = 'REDIS_CLIENT';
 
@@ -62,6 +68,25 @@ interface RunState {
   goalsTotal: number;
   reconSummary?: string;
   adapter?: ArenaTargetAdapter;
+  kind: 'CHAT' | 'RAG' | 'AGENT' | 'WIDGET';
+  agent?: AgentConfig;
+  rag?: RagState;
+  artifacts: RunArtifacts;
+  warnings: Array<{ category: ArenaGoalCategory; title: string; text: string; priority: number }>;
+}
+
+interface RagState {
+  config: RagConfig;
+  ctx: RagHttpContext;
+  /** Documents that were (or may have been) planted and must be removed again. */
+  cleanup: RagDoc[];
+  /** goalId -> planted doc (AUTO mode). */
+  docs: Map<string, RagDoc>;
+}
+
+interface RunArtifacts {
+  rag?: { docs: Array<{ docId: string; plantedAt: string; deletedAt?: string; deleteError?: string }> };
+  agent?: { toolCallsObserved: number };
 }
 
 const estimateTokens = (s: string): number => Math.ceil(s.length / 4);
@@ -86,6 +111,7 @@ export class ArenaOrchestratorService {
     private readonly recommendations: RecommendationService,
     private readonly audit: AuditService,
     @Inject(ARENA_COUNTER_REDIS) private readonly redis: ArenaCounterRedis,
+    private readonly planter: RagPlanter,
     @Optional() @Inject(LLM_CLIENT) private readonly llm?: LlmClient,
   ) {}
 
@@ -118,6 +144,9 @@ export class ArenaOrchestratorService {
       totalBreaches: 0,
       goalsDone: 0,
       goalsTotal: run.goalIds.length,
+      kind: run.aiTarget.kind ?? 'CHAT',
+      artifacts: {},
+      warnings: [],
     };
 
     try {
@@ -127,6 +156,9 @@ export class ArenaOrchestratorService {
       } catch (err) {
         outcome = this.toOutcome(err);
       }
+      // Always, also after abort/kill/failure: remove planted test documents and release the browser.
+      await this.cleanupRag(state);
+      await this.closeAdapter(state);
       await this.finalize(state, outcome);
     } finally {
       // Release the per-target lock (set by ArenaRunsService.start) no matter how the run ended.
@@ -142,6 +174,10 @@ export class ArenaOrchestratorService {
 
   private toOutcome(err: unknown): Outcome {
     if (err instanceof RunStopError) return { status: 'ABORTED', reason: err.reason };
+    if (err instanceof BrowserUnavailableError) {
+      this.log.error('browser is not available for the widget transport');
+      return { status: 'FAILED', reason: 'browser_unavailable' };
+    }
     if (err instanceof TargetUnsafeError) {
       this.log.error('target endpoint refused by SSRF protection');
       return { status: 'FAILED', reason: 'target_unsafe' };
@@ -157,17 +193,26 @@ export class ArenaOrchestratorService {
       return { status: 'FAILED', reason: 'tenant_mismatch' };
     }
 
-    const goals = await this.loadGoals(run);
+    // Defense in depth: re-check the kind-specific preconditions at runtime, independent of the preflight.
+    const precondition = this.checkKindPreconditions(state);
+    if (precondition) return precondition;
+
+    const loaded = await this.loadGoals(run);
+    // Only goals that apply to this kind of target (kinds missing = legacy goal = chat only).
+    const goals = loaded.filter((g) => (g.kinds ?? ['CHAT']).includes(state.kind));
     if (goals.length === 0) return { status: 'FAILED', reason: 'no_goals' };
     state.goalsTotal = goals.length;
 
     const secrets = await this.aiTargets.getSecrets(run.aiTargetId, orgId);
     state.secrets = secrets.apiKey ? [secrets.apiKey] : [];
     state.fragments = secrets.knownPromptFragments ?? [];
-    state.adapter = this.adapters.forTarget(run.aiTarget, { apiKey: secrets.apiKey }, {
+    state.adapter = await this.adapters.create(run.aiTarget, { apiKey: secrets.apiKey }, {
       requestsPerSecond: run.requestsPerSecond,
       clock: this.adapterClock,
     });
+    if (state.rag) {
+      state.rag.ctx.headers = buildAuthHeaders(run.aiTarget.authHeaderName, secrets.apiKey, 'Authorization', true);
+    }
 
     const info = this.llm?.modelInfo;
     await this.prisma.arenaRun.updateMany({
@@ -184,6 +229,7 @@ export class ArenaOrchestratorService {
 
     await this.guard(state);
     await this.recon(state, goals[0]);
+    if (state.rag) await this.prepareRag(state, goals);
 
     for (const goal of goals) {
       await this.guard(state);
@@ -213,6 +259,192 @@ export class ArenaOrchestratorService {
     const rows = await this.prisma.arenaGoal.findMany({ where: { id: { in: ids }, active: true } });
     const byId = new Map(rows.map((g) => [g.id, g]));
     return ids.map((id) => byId.get(id)).filter((g): g is NonNullable<typeof g> => !!g);
+  }
+
+  // ---- kinds: runtime preconditions, RAG, cleanup -----------------------------------------------
+
+  /** Re-checks the kind-specific safety preconditions at runtime. Returns a FAILED outcome if one does not hold. */
+  private checkKindPreconditions(state: RunState): Outcome | null {
+    const t = state.run.aiTarget;
+    if ((state.kind === 'WIDGET') !== (t.adapter === 'WIDGET')) return { status: 'FAILED', reason: 'config_invalid' };
+
+    switch (state.kind) {
+      case 'AGENT': {
+        // Agents may only be tested in staging with both attestations — never in production.
+        if (t.environment !== 'STAGING' || !t.stagingConfirmedAt || !t.sandboxAttestedAt) {
+          return { status: 'FAILED', reason: 'agent_not_attested' };
+        }
+        const a = parseAgentConfig(t.agentConfig);
+        if (!a.ok) return { status: 'FAILED', reason: 'config_invalid' };
+        state.agent = a.config;
+        return null;
+      }
+      case 'RAG': {
+        const r = parseRagConfig(t.ragConfig);
+        if (!r.ok) return { status: 'FAILED', reason: 'rag_not_configured' };
+        if (r.config.mode === 'AUTO' && !r.config.ingest) return { status: 'FAILED', reason: 'rag_not_configured' };
+        if (r.config.mode === 'MANUAL' && !t.ragDocsPlacedAt) return { status: 'FAILED', reason: 'rag_docs_not_placed' };
+        state.rag = {
+          config: r.config,
+          ctx: { endpointUrl: t.target.value, headers: {}, beforeRequest: this.requestHook(state) },
+          cleanup: [],
+          docs: new Map(),
+        };
+        return null;
+      }
+      case 'WIDGET': {
+        let pageHost = '';
+        try {
+          pageHost = new URL(String((t.widgetConfig as { pageUrl?: unknown } | null)?.pageUrl ?? '')).hostname.toLowerCase();
+        } catch {
+          return { status: 'FAILED', reason: 'widget_host_mismatch' };
+        }
+        if (pageHost !== new URL(t.target.value).hostname.toLowerCase()) return { status: 'FAILED', reason: 'widget_host_mismatch' };
+        return null;
+      }
+      default:
+        return null;
+    }
+  }
+
+  /** Plants one marked test document per RAG goal (AUTO mode) and waits for indexing. MANUAL: nothing is planted. */
+  private async prepareRag(
+    state: RunState,
+    goals: Array<{ id: string; key: string; seedAttacks: unknown; successCriteria: unknown }>,
+  ): Promise<void> {
+    const rag = state.rag as RagState;
+    if (rag.config.mode !== 'AUTO') return;
+    const ragGoals = goals.filter((g) => parseSuccessCriteria(g.successCriteria)?.type === 'rag_marker').slice(0, ARENA_LIMITS.maxRagDocsPerRun);
+    let index = 0;
+    for (const goal of ragGoals) {
+      const criteria = parseSuccessCriteria(goal.successCriteria);
+      const seeds = parseSeedAttacks(goal.seedAttacks);
+      if (!criteria || !seeds) continue;
+      await this.guard(state);
+      const doc = this.planter.buildDocument(goal, seeds[0], criteria, state.run.id, index++);
+      rag.cleanup.push(doc); // registered BEFORE the request: even a half-failed ingest is cleaned up
+      try {
+        doc.docId = await this.planter.ingest(rag.ctx, rag.config, doc);
+        doc.plantedAt = new Date(this.now());
+        rag.docs.set(goal.id, doc);
+        this.syncRagArtifacts(state);
+        await this.flushUsage(state);
+      } catch (err) {
+        if (!(err instanceof RagOperationError)) throw err;
+        this.log.warn(`RAG document for ${goal.key} could not be planted (${err.code})`);
+      }
+    }
+    if (rag.docs.size > 0) await this.planter.waitForIndexing(rag.config.indexingDelayMs, () => this.guard(state));
+  }
+
+  /**
+   * RAG goals: undefined = not a RAG goal (normal chat loop), RagDoc = AUTO (planted document),
+   * null = MANUAL (customer-placed documents), 'skip' = nothing to test (document was not planted).
+   */
+  private async ragGoalSetup(
+    state: RunState,
+    goal: { id: string; key: string; category: ArenaGoalCategory; successCriteria: unknown },
+  ): Promise<RagDoc | null | undefined | 'skip'> {
+    const criteria = parseSuccessCriteria(goal.successCriteria);
+    if (criteria?.type !== 'rag_marker') return undefined;
+    if (!state.rag) return 'skip';
+    if (state.rag.config.mode === 'MANUAL') return null;
+    const doc = state.rag.docs.get(goal.id);
+    if (doc) return doc;
+    const row = await this.persistAttempt(state, {
+      goalId: goal.id,
+      round: 1,
+      kind: 'ATTACK',
+      technique: 'rag_question',
+      attackText: '[test document could not be planted]',
+      responseText: null,
+      verdict: 'UNCLEAR',
+      confidence: 0,
+      evidence: { rule: 'rag_marker', error: 'not_planted' },
+      repro: null,
+      tokens: 0,
+      latencyMs: null,
+    });
+    await this.publishAttempt(state, row, goal.key, goal.category);
+    return 'skip';
+  }
+
+  private syncRagArtifacts(state: RunState): void {
+    const rag = state.rag;
+    if (!rag) return;
+    state.artifacts.rag = {
+      docs: rag.cleanup
+        .filter((d) => d.plantedAt)
+        .map((d) => ({
+          docId: d.docId,
+          plantedAt: (d.plantedAt as Date).toISOString(),
+          ...(d.deletedAt ? { deletedAt: d.deletedAt.toISOString() } : {}),
+          ...(d.deleteError ? { deleteError: d.deleteError } : {}),
+        })),
+    };
+  }
+
+  /** Counts a request without enforcing limits: cleanup must run even after a kill or budget stop. */
+  private countingHook(state: RunState): () => Promise<void> {
+    return async () => {
+      const key = arenaRedisKeys.orgDailyRequests(state.run.organizationId, arenaUtcDayKey(new Date(this.now())));
+      await this.redis.incrby(key, 1);
+      if ((await this.redis.ttl(key)) === -1) await this.redis.expire(key, 3 * 24 * 3600);
+      state.usedRequests++;
+    };
+  }
+
+  /** Removes the planted test documents (always: also after abort/kill/failure). Never logs document content. */
+  private async cleanupRag(state: RunState): Promise<void> {
+    const rag = state.rag;
+    if (!rag || rag.cleanup.length === 0) return;
+    const ctx: RagHttpContext = { ...rag.ctx, beforeRequest: this.countingHook(state) };
+    for (const doc of rag.cleanup) {
+      try {
+        await this.planter.remove(ctx, rag.config, doc);
+        doc.deletedAt = new Date(this.now());
+      } catch (err) {
+        doc.deleteError = err instanceof RagOperationError ? err.code : err instanceof TargetUnsafeError ? 'unsafe_url' : 'error';
+      }
+    }
+    this.syncRagArtifacts(state);
+    try {
+      await this.flushUsage(state);
+    } catch (err) {
+      this.log.error(`could not persist RAG artifacts: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    const failed = rag.cleanup.filter((d) => d.deleteError);
+    if (failed.length === 0) return;
+    const docIds = failed.map((d) => d.docId);
+    // Created in finalize(), after the per-category recommendations.
+    state.warnings.push({
+      category: 'INDIRECT_INJECTION',
+      title: 'Testdokumente konnten nicht entfernt werden',
+      text: `PTaaS konnte ${failed.length} eingespielte Testdokument(e) nicht automatisch loeschen. Bitte entferne sie manuell aus dem Index: ${docIds.join(', ')}. Die Dokumente sind harmlos, enthalten aber eine versteckte Marker-Anweisung und koennen weiterhin Antworten beeinflussen.`,
+      priority: 1,
+    });
+    try {
+      await this.audit.logStrict({
+        action: 'arena.rag.cleanup_failed',
+        userId: state.run.createdById,
+        organizationId: state.run.organizationId,
+        resource: 'arena_run',
+        resourceId: state.run.id,
+        // Document ids and error codes only — never document content.
+        metadata: { count: failed.length, docIds, errors: failed.map((d) => d.deleteError) },
+      });
+    } catch (err) {
+      this.log.error(`audit write failed for RAG cleanup: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private async closeAdapter(state: RunState): Promise<void> {
+    try {
+      await state.adapter?.close?.();
+    } catch (err) {
+      this.log.error(`adapter close failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // ---- limits ---------------------------------------------------------------------------------
@@ -245,7 +477,11 @@ export class ArenaOrchestratorService {
   private async flushUsage(state: RunState): Promise<void> {
     await this.prisma.arenaRun.updateMany({
       where: { id: state.run.id, organizationId: state.run.organizationId },
-      data: { usedRequests: state.usedRequests, usedTokens: state.usedTokens },
+      data: {
+        usedRequests: state.usedRequests,
+        usedTokens: state.usedTokens,
+        ...(Object.keys(state.artifacts).length > 0 ? { artifacts: state.artifacts as Prisma.InputJsonValue } : {}),
+      },
     });
   }
 
@@ -297,6 +533,9 @@ export class ArenaOrchestratorService {
     },
   ): Promise<void> {
     const { run } = state;
+    const early = await this.ragGoalSetup(state, goal);
+    if (early === 'skip') return;
+    const ragDoc: RagDoc | null | undefined = early;
     const criteria = parseSuccessCriteria(goal.successCriteria);
     const seeds = parseSeedAttacks(goal.seedAttacks);
     if (!criteria || !seeds) {
@@ -313,16 +552,30 @@ export class ArenaOrchestratorService {
 
     for (let round = 1; round <= rounds; round++) {
       await this.guard(state);
-      const tokens = buildTokens(criteria, run.id);
-      const plan = await this.red.nextAttack({
-        goal: { key: goal.key, category: goal.category, title: goal.title, description: goal.description },
-        seeds,
-        criteria,
-        tokens,
-        round,
-        history,
-        reconSummary: state.reconSummary,
-      });
+      let tokens = buildTokens(criteria, run.id);
+      let plan: { technique: string; prompt: string; llmTokens: number };
+      let judgeAttackText: string;
+      if (ragDoc !== undefined) {
+        // RAG: a harmless question about the planted document's topic (never contains the token).
+        if (ragDoc) tokens = ragDoc.tokens;
+        else delete tokens.marker; // MANUAL: only the customer's known markers count
+        const question = this.planter.questionFor(ragDoc, round);
+        plan = { technique: 'rag_question', prompt: question, llmTokens: 0 };
+        // The document text counts as "attacker supplied" for echo detection (quoting the hidden instruction is no breach).
+        judgeAttackText = ragDoc ? `${question} ${ragDoc.content}` : question;
+      } else {
+        const p = await this.red.nextAttack({
+          goal: { key: goal.key, category: goal.category, title: goal.title, description: goal.description },
+          seeds,
+          criteria,
+          tokens,
+          round,
+          history,
+          reconSummary: state.reconSummary,
+        });
+        plan = p;
+        judgeAttackText = p.prompt;
+      }
       state.usedTokens += plan.llmTokens;
 
       let res: AdapterResponse | null = null;
@@ -336,12 +589,28 @@ export class ArenaOrchestratorService {
       let attemptTokens = plan.llmTokens;
       if (res) attemptTokens += estimateTokens(plan.prompt) + estimateTokens(res.text);
 
+      // Agent: tool calls reported by the target (raw values are only used for matching; stored form is redacted).
+      let toolCalls: ObservedToolCall[] = [];
+      if (res && state.kind === 'AGENT') toolCalls = extractToolCalls(res.raw, state.agent?.toolCallsPath);
+      const redactedCalls = toolCalls.map((c) => ({
+        name: redactText(c.name, { secrets: state.secrets, fragments: state.fragments, maxChars: 100 }),
+        arguments: redactText(c.arguments, { secrets: state.secrets, fragments: state.fragments, maxChars: 500 }),
+      }));
+      if (toolCalls.length > 0) {
+        const agentArt = (state.artifacts.agent ??= { toolCallsObserved: 0 });
+        agentArt.toolCallsObserved += toolCalls.length;
+      }
+
+      const ragManual = ragDoc === null;
       const judgeInput = {
         goal: { title: goal.title, description: goal.description },
         criteria,
-        attackText: plan.prompt,
+        attackText: judgeAttackText,
         tokens,
-        fragments: state.fragments,
+        // Fragments double as customer-placed markers only for RAG MANUAL goals; elsewhere they are prompt fragments.
+        fragments: criteria.type === 'rag_marker' && !ragManual ? [] : state.fragments,
+        toolCalls,
+        toolTraceAvailable: state.kind === 'AGENT' && !!state.agent?.toolCallsPath,
       };
       let verdict: JudgeResult = res
         ? await this.judge.judge({ ...judgeInput, responseText: res.text })
@@ -368,7 +637,7 @@ export class ArenaOrchestratorService {
         responseText: res?.text ?? null,
         verdict: verdict.verdict,
         confidence: verdict.confidence,
-        evidence: verdict.evidence,
+        evidence: redactedCalls.length > 0 ? { ...verdict.evidence, toolCalls: redactedCalls } : verdict.evidence,
         repro,
         tokens: attemptTokens,
         latencyMs: res?.latencyMs ?? null,
@@ -395,10 +664,11 @@ export class ArenaOrchestratorService {
           repro,
           evidence: verdict.evidence,
           severity: computeSeverity(goal.baseSeverity, { deterministic: verdict.deterministic, repro, round }),
+          toolCalls: redactedCalls.length > 0 ? redactedCalls : undefined,
         });
       }
 
-      await this.publishAttempt(state, row, goal.key, goal.category);
+      await this.publishAttempt(state, row, goal.key, goal.category, redactedCalls);
       await this.publishScore(state);
       if (verdict.verdict === 'BREACH') break; // goal reached
     }
@@ -504,6 +774,7 @@ export class ArenaOrchestratorService {
     row: { id: string; round: number; kind: 'RECON' | 'ATTACK'; technique: string; attackText: string; responseText: string | null; verdict: 'BREACH' | 'BLOCKED' | 'UNCLEAR' | null; confidence: number | null; findingId: string | null; createdAt: Date },
     goalKey: string,
     category: string,
+    toolCalls?: { name: string; arguments: string }[],
   ): Promise<void> {
     // Row texts are already redacted (persisted form).
     const view: ArenaAttemptView = {
@@ -518,6 +789,7 @@ export class ArenaOrchestratorService {
       verdict: row.verdict,
       confidence: row.confidence,
       findingId: row.findingId,
+      ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
       createdAt: row.createdAt.toISOString(),
     };
     await this.events.publish(state.run.organizationId, state.run.id, { type: 'attempt', attempt: view });
@@ -553,6 +825,13 @@ export class ArenaOrchestratorService {
         this.log.error(`recommendations failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+    for (const w of state.warnings) {
+      try {
+        await this.recommendations.createWarning(run.id, orgId, w);
+      } catch (err) {
+        this.log.error(`warning recommendation failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
 
     try {
       await this.prisma.arenaRun.updateMany({
@@ -563,6 +842,7 @@ export class ArenaOrchestratorService {
           abortedReason: outcome.reason ?? null,
           usedRequests: state.usedRequests,
           usedTokens: state.usedTokens,
+          ...(Object.keys(state.artifacts).length > 0 ? { artifacts: state.artifacts as Prisma.InputJsonValue } : {}),
         },
       });
       await this.prisma.scan.updateMany({

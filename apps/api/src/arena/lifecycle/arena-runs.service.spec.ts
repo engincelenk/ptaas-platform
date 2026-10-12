@@ -8,7 +8,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ARENA_LIMITS, ARENA_RUN_QUEUE, arenaRedisKeys } from '../arena.constants';
-import { ArenaRunsService, clampRunBudgets } from './arena-runs.service';
+import { ArenaRunsService, clampRunBudgets, requiredConfirmations } from './arena-runs.service';
 import { arenaUtcDayKey, type ArenaActor } from './arena-views';
 
 const ADMIN: ArenaActor = { userId: 'u-admin', organizationId: 'org1', role: 'ADMIN' };
@@ -16,6 +16,7 @@ const ENGINEER: ArenaActor = { userId: 'u-eng', organizationId: 'org1', role: 'S
 const OPERATOR_ADMIN: ArenaActor = { ...ADMIN, email: 'ops@platform.example' };
 const ROE = { id: 'roe1', version: 1, content: 'RoE', contentHash: 'hash1' };
 const DAY = 86_400_000;
+const ALL_KINDS = ['CHAT', 'RAG', 'AGENT', 'WIDGET'];
 
 function runRow(over: Record<string, unknown> = {}) {
   return {
@@ -50,6 +51,14 @@ function runRow(over: Record<string, unknown> = {}) {
     aiTarget: {
       id: 'ai1',
       name: 'Bot',
+      kind: 'CHAT',
+      environment: 'PRODUCTION',
+      ragConfig: null,
+      agentConfig: null,
+      widgetConfig: null,
+      ragDocsPlacedAt: null,
+      stagingConfirmedAt: null,
+      sandboxAttestedAt: null,
       targetId: 't1',
       organizationId: 'org1',
       target: {
@@ -76,7 +85,7 @@ function setup(run: Record<string, unknown> = runRow()) {
       count: vi.fn().mockResolvedValue(0),
     },
     aiTarget: { findFirst: vi.fn().mockResolvedValue(runRow().aiTarget), count: vi.fn().mockResolvedValue(0) },
-    arenaGoal: { findMany: vi.fn().mockResolvedValue([{ id: 'g1' }, { id: 'g2' }]) },
+    arenaGoal: { findMany: vi.fn().mockResolvedValue([{ id: 'g1', kinds: ALL_KINDS }, { id: 'g2', kinds: ALL_KINDS }]) },
     arenaAttempt: { groupBy: vi.fn().mockResolvedValue([]), findMany: vi.fn().mockResolvedValue([]) },
     arenaRecommendation: { findMany: vi.fn().mockResolvedValue([]) },
     scan: { update: vi.fn().mockResolvedValue({}) },
@@ -168,7 +177,7 @@ describe('ArenaRunsService.create', () => {
 
   it('rejects goals that do not exist or are inactive', async () => {
     const { svc, prisma } = setup();
-    prisma.arenaGoal.findMany.mockResolvedValue([{ id: 'g1' }]);
+    prisma.arenaGoal.findMany.mockResolvedValue([{ id: 'g1', kinds: ALL_KINDS }]);
     await expect(svc.create({ aiTargetId: 'ai1', goalIds: ['g1', 'gX'] }, ENGINEER)).rejects.toThrow(BadRequestException);
     expect(prisma.arenaGoal.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: ['g1', 'gX'] }, active: true } }),
@@ -736,5 +745,200 @@ describe('ArenaRunsService.retest / setGlobalKill / reads', () => {
     expect(o.runs).toEqual({ total: 5, running: 1, awaitingApproval: 2 });
     expect(o.lastRun?.id).toBe('r2');
     expect(o.breachRate).toBe(0.25);
+  });
+});
+
+// ───────────────────────── stages 2-4 ─────────────────────────
+
+function withTarget(over: Record<string, unknown>, targetOver: Record<string, unknown> = {}, runOver: Record<string, unknown> = {}) {
+  const r = runRow(runOver);
+  Object.assign(r.aiTarget, over);
+  Object.assign(r.aiTarget.target, targetOver);
+  return r;
+}
+
+describe('stage 2-4: goal <-> kind', () => {
+  it('rejects a goal that does not apply to the target kind (400)', async () => {
+    const s = setup();
+    s.prisma.aiTarget.findFirst.mockResolvedValue(withTarget({ kind: 'AGENT' }).aiTarget);
+    s.prisma.arenaGoal.findMany.mockResolvedValue([
+      { id: 'g1', kinds: ['AGENT'] },
+      { id: 'g2', kinds: ['CHAT', 'RAG'] },
+    ]);
+    await expect(s.svc.create({ aiTargetId: 'ai1', goalIds: ['g1', 'g2'] }, ENGINEER)).rejects.toThrow(/does not apply/);
+    expect(s.prisma.arenaRun.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts matching goals', async () => {
+    const s = setup();
+    s.prisma.aiTarget.findFirst.mockResolvedValue(withTarget({ kind: 'RAG' }).aiTarget);
+    s.prisma.arenaGoal.findMany.mockResolvedValue([{ id: 'g1', kinds: ['RAG'] }, { id: 'g2', kinds: ALL_KINDS }]);
+    await s.svc.create({ aiTargetId: 'ai1', goalIds: ['g1', 'g2'] }, ENGINEER);
+    expect(s.prisma.arenaRun.create).toHaveBeenCalled();
+  });
+
+  it('catalog(kind) filters by kind; kinds are part of GoalView', async () => {
+    const s = setup();
+    s.prisma.arenaGoal.findMany.mockResolvedValue([
+      { id: 'g1', key: 'RAG-1', category: 'INDIRECT_INJECTION', title: 't', description: 'd', owaspRef: null, atlasRef: null, baseSeverity: 'HIGH', kinds: ['RAG'] },
+    ]);
+    const out = await s.svc.catalog('RAG');
+    expect(s.prisma.arenaGoal.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { active: true, kinds: { has: 'RAG' } } }));
+    expect(out[0].kinds).toEqual(['RAG']);
+    await s.svc.catalog();
+    expect(s.prisma.arenaGoal.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: { active: true } }));
+  });
+});
+
+describe('stage 2-4: preflight per kind', () => {
+  const NOW = Date.now();
+  const agent = (o: Record<string, unknown> = {}) =>
+    withTarget({ kind: 'AGENT', environment: 'STAGING', stagingConfirmedAt: new Date(NOW), sandboxAttestedAt: new Date(NOW), ...o });
+  const rag = (cfg: unknown, o: Record<string, unknown> = {}) => withTarget({ kind: 'RAG', ragConfig: cfg, ...o });
+  const widget = (pageUrl: string) => withTarget({ kind: 'WIDGET', adapter: 'WIDGET', widgetConfig: { pageUrl, inputSelector: 'i', responseSelector: 'r' } });
+  const start = (run: Record<string, unknown>) => {
+    const s = setup(run);
+    return { s, result: code(s.svc.start('run1', 'org1', 'u-eng')) };
+  };
+
+  it('AGENT: happy path with staging + both attestations', async () => {
+    const s = setup(agent());
+    await s.svc.start('run1', 'org1', 'u-eng');
+    expect(s.queue.add).toHaveBeenCalled();
+  });
+
+  it('AGENT_NOT_STAGING', async () => {
+    const { s, result } = start(agent({ environment: 'PRODUCTION' }));
+    expect(await result).toBe('AGENT_NOT_STAGING');
+    expect(s.queue.add).not.toHaveBeenCalled();
+    expect(s.audit.logStrict).not.toHaveBeenCalled();
+  });
+
+  it('ATTESTATION_MISSING (staging or sandbox attestation absent)', async () => {
+    expect(await start(agent({ stagingConfirmedAt: null })).result).toBe('ATTESTATION_MISSING');
+    expect(await start(agent({ sandboxAttestedAt: null })).result).toBe('ATTESTATION_MISSING');
+  });
+
+  it('RAG AUTO needs an ingest configuration (RAG_NOT_CONFIGURED); missing config too', async () => {
+    expect(await start(rag({ mode: 'AUTO' })).result).toBe('RAG_NOT_CONFIGURED');
+    expect(await start(rag(null)).result).toBe('RAG_NOT_CONFIGURED');
+    const s = setup(rag({ mode: 'AUTO', ingest: { url: 'https://chat.example.com/i', method: 'POST', bodyTemplate: {} } }));
+    await s.svc.start('run1', 'org1', 'u-eng');
+    expect(s.queue.add).toHaveBeenCalled();
+  });
+
+  it('RAG MANUAL needs the placement attestation (RAG_DOCS_NOT_PLACED)', async () => {
+    expect(await start(rag({ mode: 'MANUAL' })).result).toBe('RAG_DOCS_NOT_PLACED');
+    const s = setup(rag({ mode: 'MANUAL' }, { ragDocsPlacedAt: new Date(NOW) }));
+    await s.svc.start('run1', 'org1', 'u-eng');
+    expect(s.queue.add).toHaveBeenCalled();
+  });
+
+  it('WIDGET_HOST_MISMATCH when the page host differs from the verified host', async () => {
+    expect(await start(widget('https://evil.example.org/page')).result).toBe('WIDGET_HOST_MISMATCH');
+    expect(await start(widget('not a url')).result).toBe('WIDGET_HOST_MISMATCH');
+    const s = setup(widget('https://CHAT.example.com/help'));
+    await s.svc.start('run1', 'org1', 'u-eng');
+    expect(s.ssrf.resolveSafe).toHaveBeenCalledWith('chat.example.com');
+  });
+
+  it('WIDGET: SSRF check of the page host (HOST_UNSAFE)', async () => {
+    const s = setup(widget('https://chat.example.com/help'));
+    s.ssrf.resolveSafe.mockImplementation((h: string, ...rest: unknown[]) => {
+      void rest;
+      return h === 'chat.example.com' && s.ssrf.resolveSafe.mock.calls.length > 1
+        ? Promise.reject(new BadRequestException('internal'))
+        : Promise.resolve([]);
+    });
+    expect(await code(s.svc.start('run1', 'org1', 'u-eng'))).toBe('HOST_UNSAFE');
+    expect(s.queue.add).not.toHaveBeenCalled();
+  });
+});
+
+describe('stage 2-4: approval confirmations per kind', () => {
+  const ALL = {
+    noProduction: true,
+    noSideEffects: true,
+    noTools: true,
+    providerTosAccepted: true,
+    stagingOnly: true,
+    toolsSandboxed: true,
+    testDocumentsMayBeIndexedAndRemoved: true,
+  };
+  const dto = (confirmations: Record<string, boolean>) => ({ roeVersion: 1, emergencyContact: 'c', confirmations });
+  const run = (kind: string) => runRow({ status: 'AWAITING_APPROVAL', aiTarget: { ...runRow().aiTarget, kind } });
+  const pick = (keys: string[]) => Object.fromEntries(keys.map((k) => [k, true]));
+
+  it.each([
+    ['CHAT', ['noProduction', 'noSideEffects', 'providerTosAccepted', 'noTools']],
+    ['WIDGET', ['noProduction', 'noSideEffects', 'providerTosAccepted', 'noTools']],
+    ['RAG', ['noProduction', 'noSideEffects', 'providerTosAccepted', 'noTools', 'testDocumentsMayBeIndexedAndRemoved']],
+    ['AGENT', ['noProduction', 'noSideEffects', 'providerTosAccepted', 'stagingOnly', 'toolsSandboxed']],
+  ])('%s: exactly the required set approves; dropping any single one is rejected (400)', async (kind, keys) => {
+    expect(requiredConfirmations(kind).sort()).toEqual([...keys].sort());
+    const ok = setup(run(kind));
+    await ok.svc.approve('run1', dto(pick(keys)), ADMIN);
+    expect(ok.prisma.arenaRun.updateMany).toHaveBeenCalled();
+    for (const missing of keys) {
+      for (const value of [undefined, false]) {
+        const s = setup(run(kind));
+        const c = pick(keys);
+        if (value === undefined) delete c[missing];
+        else c[missing] = false;
+        await expect(s.svc.approve('run1', dto(c), ADMIN)).rejects.toThrow(BadRequestException);
+        expect(s.prisma.arenaRun.updateMany).not.toHaveBeenCalled();
+        expect(s.audit.logStrict).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it('a full set of confirmations is not enough for an AGENT if the agent ones are missing', async () => {
+    const s = setup(run('AGENT'));
+    const { stagingOnly, toolsSandboxed, ...chatSet } = ALL;
+    void stagingOnly;
+    void toolsSandboxed;
+    await expect(s.svc.approve('run1', dto(chatSet), ADMIN)).rejects.toThrow(/stagingOnly/);
+  });
+});
+
+describe('stage 2-4: views', () => {
+  it('artifactsSummary counts planted/deleted/failed RAG docs and agent tool calls (no contents)', async () => {
+    const s = setup(
+      runRow({
+        artifacts: {
+          rag: {
+            docs: [
+              { docId: 'd1', plantedAt: 'x', deletedAt: 'y' },
+              { docId: 'd2', plantedAt: 'x', deleteError: 'HTTP 500' },
+              { docId: 'd3', plantedAt: 'x' },
+            ],
+          },
+          agent: { toolCallsObserved: 7 },
+        },
+      }),
+    );
+    const v = await s.svc.getView('run1', 'org1', 'ADMIN');
+    expect(v.artifactsSummary).toEqual({ rag: { planted: 3, deleted: 1, cleanupFailed: 1 }, agent: { toolCallsObserved: 7 } });
+    expect(JSON.stringify(v)).not.toContain('docId');
+    expect(v.targetKind).toBe('CHAT');
+  });
+
+  it('artifactsSummary is null without artifacts or with junk', async () => {
+    expect((await setup(runRow({ artifacts: null })).svc.getView('run1', 'org1')).artifactsSummary).toBeNull();
+    expect((await setup(runRow({ artifacts: { x: 1 } })).svc.getView('run1', 'org1')).artifactsSummary).toBeNull();
+  });
+
+  it('attempt views carry bounded tool calls from evidence', async () => {
+    const s = setup();
+    const many = Array.from({ length: 30 }, (_, i) => ({ name: `t${i}`, arguments: 'x'.repeat(2000) }));
+    s.prisma.arenaAttempt.findMany.mockResolvedValue([
+      { id: 'a1', goal: { key: 'AG-1', category: 'EXCESSIVE_AGENCY' }, round: 1, kind: 'ATTACK', technique: 't', attackText: 'a', responseText: 'r', verdict: 'BREACH', confidence: 1, findingId: null, evidence: { toolCalls: many }, createdAt: new Date() },
+      { id: 'a2', goal: { key: 'PI-1', category: 'PROMPT_INJECTION' }, round: 1, kind: 'ATTACK', technique: 't', attackText: 'a', responseText: 'r', verdict: 'BLOCKED', confidence: 1, findingId: null, evidence: null, createdAt: new Date() },
+    ]);
+    const out = await s.svc.attempts('run1', 'org1');
+    expect(out[0].toolCalls).toHaveLength(ARENA_LIMITS.maxToolCallsRecorded);
+    expect(out[0].toolCalls?.[0].arguments.length).toBe(1000);
+    expect(out[1].toolCalls).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('evidence');
   });
 });

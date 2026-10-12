@@ -22,8 +22,13 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-export const ARENA_ADAPTERS = ['OPENAI_COMPAT', 'ANTHROPIC', 'GENERIC_JSON'] as const;
+export const ARENA_ADAPTERS = ['OPENAI_COMPAT', 'ANTHROPIC', 'GENERIC_JSON', 'WIDGET'] as const;
 export type ArenaAdapterName = (typeof ARENA_ADAPTERS)[number];
+
+export const ARENA_TARGET_KINDS = ['CHAT', 'RAG', 'AGENT', 'WIDGET'] as const;
+export type ArenaTargetKindName = (typeof ARENA_TARGET_KINDS)[number];
+export const ARENA_ENVIRONMENTS = ['STAGING', 'PRODUCTION'] as const;
+export type ArenaEnvironmentName = (typeof ARENA_ENVIRONMENTS)[number];
 
 export const VERIFICATION_METHODS = ['DNS_TXT', 'HTTP_FILE', 'META_TAG'] as const;
 export type VerificationMethodName = (typeof VERIFICATION_METHODS)[number];
@@ -53,6 +58,31 @@ export class CreateAiTargetDto {
   @ApiProperty({ enum: ARENA_ADAPTERS })
   @IsEnum(ARENA_ADAPTERS)
   adapter!: ArenaAdapterName;
+
+  @ApiPropertyOptional({ enum: ARENA_TARGET_KINDS, default: 'CHAT' })
+  @IsOptional()
+  @IsEnum(ARENA_TARGET_KINDS)
+  kind?: ArenaTargetKindName;
+
+  @ApiPropertyOptional({ enum: ARENA_ENVIRONMENTS, description: 'AGENT targets must be STAGING' })
+  @IsOptional()
+  @IsEnum(ARENA_ENVIRONMENTS)
+  environment?: ArenaEnvironmentName;
+
+  @ApiPropertyOptional({ description: 'RAG: mode AUTO|MANUAL, ingest, delete, indexingDelayMs (no secrets)' })
+  @IsOptional()
+  @IsObject()
+  ragConfig?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'AGENT: dryRunHeaderName/Value, toolCallsPath (no secrets)' })
+  @IsOptional()
+  @IsObject()
+  agentConfig?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'WIDGET: pageUrl and selectors (no secrets)' })
+  @IsOptional()
+  @IsObject()
+  widgetConfig?: Record<string, unknown>;
 
   @ApiPropertyOptional({ description: 'JSON path mapping for GENERIC_JSON (no secrets)' })
   @IsOptional()
@@ -105,6 +135,31 @@ export class UpdateAiTargetDto {
   @IsOptional()
   @IsEnum(ARENA_ADAPTERS)
   adapter?: ArenaAdapterName;
+
+  @ApiPropertyOptional({ enum: ARENA_TARGET_KINDS, default: 'CHAT' })
+  @IsOptional()
+  @IsEnum(ARENA_TARGET_KINDS)
+  kind?: ArenaTargetKindName;
+
+  @ApiPropertyOptional({ enum: ARENA_ENVIRONMENTS, description: 'AGENT targets must be STAGING' })
+  @IsOptional()
+  @IsEnum(ARENA_ENVIRONMENTS)
+  environment?: ArenaEnvironmentName;
+
+  @ApiPropertyOptional({ description: 'RAG: mode AUTO|MANUAL, ingest, delete, indexingDelayMs (no secrets)' })
+  @IsOptional()
+  @IsObject()
+  ragConfig?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'AGENT: dryRunHeaderName/Value, toolCallsPath (no secrets)' })
+  @IsOptional()
+  @IsObject()
+  agentConfig?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'WIDGET: pageUrl and selectors (no secrets)' })
+  @IsOptional()
+  @IsObject()
+  widgetConfig?: Record<string, unknown>;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -204,25 +259,40 @@ export class CreateRunDto {
 }
 
 export class ApproveConfirmationsDto {
-  @ApiProperty({ enum: [true] })
+  @ApiPropertyOptional({ description: 'Required for every kind; must be true' })
+  @IsOptional()
   @IsBoolean()
-  @Equals(true)
-  noProduction!: boolean;
+  noProduction?: boolean;
 
-  @ApiProperty({ enum: [true] })
+  @ApiPropertyOptional({ description: 'Required for every kind; must be true' })
+  @IsOptional()
   @IsBoolean()
-  @Equals(true)
-  noSideEffects!: boolean;
+  noSideEffects?: boolean;
 
-  @ApiProperty({ enum: [true] })
+  @ApiPropertyOptional({ description: 'Required CHAT/RAG/WIDGET; must be true' })
+  @IsOptional()
   @IsBoolean()
-  @Equals(true)
-  noTools!: boolean;
+  noTools?: boolean;
 
-  @ApiProperty({ enum: [true] })
+  @ApiPropertyOptional({ description: 'Required for every kind; must be true' })
+  @IsOptional()
   @IsBoolean()
-  @Equals(true)
-  providerTosAccepted!: boolean;
+  providerTosAccepted?: boolean;
+
+  @ApiPropertyOptional({ description: 'Required AGENT; must be true' })
+  @IsOptional()
+  @IsBoolean()
+  stagingOnly?: boolean;
+
+  @ApiPropertyOptional({ description: 'Required AGENT; must be true' })
+  @IsOptional()
+  @IsBoolean()
+  toolsSandboxed?: boolean;
+
+  @ApiPropertyOptional({ description: 'Required RAG; must be true' })
+  @IsOptional()
+  @IsBoolean()
+  testDocumentsMayBeIndexedAndRemoved?: boolean;
 }
 
 export class ApproveRunDto {
@@ -255,6 +325,33 @@ export class KillSwitchDto {
   @ApiProperty()
   @IsBoolean()
   on!: boolean;
+}
+
+export class AttestTargetDto {
+  @ApiPropertyOptional({ enum: [true], description: 'RAG (manual mode): test documents are in place' })
+  @IsOptional()
+  @IsBoolean()
+  @Equals(true)
+  ragDocsPlaced?: true;
+
+  @ApiPropertyOptional({ enum: [true], description: 'AGENT: the endpoint is a staging environment' })
+  @IsOptional()
+  @IsBoolean()
+  @Equals(true)
+  stagingConfirmed?: true;
+
+  @ApiPropertyOptional({ enum: [true], description: 'AGENT: tools are sandboxed / dry-run' })
+  @IsOptional()
+  @IsBoolean()
+  @Equals(true)
+  sandboxAttested?: true;
+}
+
+export class CatalogQueryDto {
+  @ApiPropertyOptional({ enum: ARENA_TARGET_KINDS })
+  @IsOptional()
+  @IsEnum(ARENA_TARGET_KINDS)
+  kind?: ArenaTargetKindName;
 }
 
 export class ListRunsQueryDto {

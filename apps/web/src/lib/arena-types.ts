@@ -1,6 +1,8 @@
 /** Mirrors the AI Arena HTTP API contract (docs/superpowers/specs/2026-10-12-ai-arena-contract.md). */
 
-export type ArenaAdapter = 'OPENAI_COMPAT' | 'ANTHROPIC' | 'GENERIC_JSON';
+export type ArenaAdapter = 'OPENAI_COMPAT' | 'ANTHROPIC' | 'GENERIC_JSON' | 'WIDGET';
+export type ArenaTargetKind = 'CHAT' | 'RAG' | 'AGENT' | 'WIDGET';
+export type ArenaEnvironment = 'STAGING' | 'PRODUCTION';
 export type VerificationMethod = 'DNS_TXT' | 'HTTP_FILE' | 'META_TAG';
 export type VerificationStatus = 'PENDING' | 'VERIFIED' | 'FAILED';
 export type ArenaVerdict = 'BREACH' | 'BLOCKED' | 'UNCLEAR';
@@ -46,6 +48,13 @@ export interface ArenaAttemptView {
   confidence: number | null;
   findingId: string | null;
   createdAt: string;
+  /** Observed tool calls (Agent targets). Already redacted by the engine; render as text only. */
+  toolCalls?: ArenaToolCall[];
+}
+
+export interface ArenaToolCall {
+  name: string;
+  arguments: string;
 }
 
 export type ArenaEvent =
@@ -72,6 +81,7 @@ export interface ArenaGoal {
   owaspRef: string | null;
   atlasRef: string | null;
   baseSeverity: string;
+  kinds?: ArenaTargetKind[];
 }
 
 export interface ArenaRoe {
@@ -79,6 +89,46 @@ export interface ArenaRoe {
   version: number;
   content: string;
   contentHash: string;
+}
+
+export interface RagConfig {
+  mode: 'AUTO' | 'MANUAL';
+  ingest?: {
+    url: string;
+    method: 'POST' | 'PUT';
+    bodyTemplate: Record<string, unknown>;
+    docIdPath?: string;
+  };
+  delete?: {
+    url: string;
+    method: 'DELETE' | 'POST';
+    bodyTemplate?: Record<string, unknown>;
+  };
+  indexingDelayMs?: number;
+}
+
+export interface AgentConfig {
+  dryRunHeaderName?: string;
+  dryRunHeaderValue?: string;
+  toolCallsPath?: string;
+}
+
+export interface WidgetConfig {
+  pageUrl: string;
+  openSelector?: string;
+  iframeSelector?: string;
+  inputSelector: string;
+  sendSelector?: string;
+  responseSelector: string;
+  cookieConsentSelector?: string;
+  waitAfterOpenMs?: number;
+  responseTimeoutMs?: number;
+}
+
+export interface TargetAttestations {
+  ragDocsPlacedAt: string | null;
+  stagingConfirmedAt: string | null;
+  sandboxAttestedAt: string | null;
 }
 
 export interface AiTargetView {
@@ -92,6 +142,12 @@ export interface AiTargetView {
   hasApiKey: boolean;
   fragmentCount: number;
   canaryPlacedAt: string | null;
+  kind?: ArenaTargetKind;
+  environment?: ArenaEnvironment;
+  ragConfig?: RagConfig | null;
+  agentConfig?: AgentConfig | null;
+  widgetConfig?: WidgetConfig | null;
+  attestations?: TargetAttestations;
   verification: {
     status: VerificationStatus;
     fresh: boolean;
@@ -140,6 +196,12 @@ export interface ArenaRunView extends ArenaRunSummary {
   retestOfRunId: string | null;
   abortedReason: string | null;
   scanId: string | null;
+  artifactsSummary?: ArenaArtifactsSummary | null;
+}
+
+export interface ArenaArtifactsSummary {
+  rag?: { planted: number; deleted: number; cleanupFailed: number };
+  agent?: { toolCallsObserved: number };
 }
 
 export interface ArenaRecommendation {
@@ -178,6 +240,17 @@ export interface CreateAiTargetBody {
   authHeaderName?: string;
   apiKey?: string;
   knownPromptFragments?: string[];
+  kind?: ArenaTargetKind;
+  environment?: ArenaEnvironment;
+  ragConfig?: RagConfig;
+  agentConfig?: AgentConfig;
+  widgetConfig?: WidgetConfig;
+}
+
+export interface AttestBody {
+  ragDocsPlaced?: true;
+  stagingConfirmed?: true;
+  sandboxAttested?: true;
 }
 
 export interface CreateRunBody {
@@ -198,8 +271,11 @@ export interface ApproveRunBody {
   confirmations: {
     noProduction: true;
     noSideEffects: true;
-    noTools: true;
     providerTosAccepted: true;
+    noTools?: true;
+    stagingOnly?: true;
+    toolsSandboxed?: true;
+    testDocumentsMayBeIndexedAndRemoved?: true;
   };
 }
 

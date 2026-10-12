@@ -16,6 +16,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import { KindBadge } from '@/components/arena/badges';
+import { kindOf } from '@/lib/arena-kinds';
 import { TargetDialog } from '@/components/arena/target-dialog';
 import { VerificationPanel } from '@/components/arena/verification-panel';
 import { useArenaRole } from '@/hooks/use-arena-role';
@@ -126,7 +128,12 @@ export default function ArenaTargetsPage() {
                 <CardContent className="p-4 space-y-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="font-medium">{t.name}</p>
+                      <p className="font-medium flex items-center gap-2">
+                        {t.name} <KindBadge kind={kindOf(t)} />
+                        {t.environment === 'STAGING' && (
+                          <span className="text-[11px] rounded bg-secondary px-1.5 py-0.5">Staging</span>
+                        )}
+                      </p>
                       <p className="text-xs text-muted-foreground break-all">{t.endpointUrl}</p>
                       <p className="text-xs text-muted-foreground mt-1">
                         Adapter {t.adapter} · API-Key {t.hasApiKey ? 'hinterlegt' : 'nicht hinterlegt'} ·{' '}

@@ -9,7 +9,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { OwaspBadge } from '@/components/arena/badges';
+import { KindBadge, OwaspBadge } from '@/components/arena/badges';
+import { goalsForKind, kindOf } from '@/lib/arena-kinds';
 import { useApiQuery } from '@/hooks/use-api-query';
 import { useArenaRole } from '@/hooks/use-arena-role';
 import { apiClient } from '@/lib/api-client';
@@ -51,7 +52,15 @@ export default function NewArenaRunPage() {
   const targets = targetsQ.data ?? [];
   const catalog = useMemo(() => catalogQ.data ?? [], [catalogQ.data]);
   const selectedTarget = targets.find((t) => t.id === targetId) ?? null;
-  const grouped = useMemo(() => groupGoalsByCategory(catalog), [catalog]);
+  const kind = kindOf(selectedTarget);
+  const kindGoals = useMemo(() => goalsForKind(catalog, kind), [catalog, kind]);
+  const grouped = useMemo(() => groupGoalsByCategory(kindGoals), [kindGoals]);
+
+  // Goals of another kind must never stay selected after the target changed.
+  useEffect(() => {
+    const allowed = new Set(kindGoals.map((g) => g.id));
+    setGoalIds((prev) => (prev.every((id) => allowed.has(id)) ? prev : prev.filter((id) => allowed.has(id))));
+  }, [kindGoals]);
 
   // Drop a selection that is no longer selectable.
   useEffect(() => {
@@ -159,7 +168,9 @@ export default function NewArenaRunPage() {
                       onChange={() => setTargetId(t.id)}
                     />
                     <span className="min-w-0">
-                      <span className="block text-sm font-medium">{t.name}</span>
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        {t.name} <KindBadge kind={kindOf(t)} />
+                      </span>
                       <span className="block text-xs text-muted-foreground break-all">{t.endpointUrl}</span>
                       <span className="block text-xs mt-1">
                         {ok ? v.text : `${v.text} – `}
@@ -188,6 +199,18 @@ export default function NewArenaRunPage() {
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
+              {kind === 'AGENT' && (
+                <div className="rounded-md border border-orange-500/60 bg-orange-500/10 p-3 text-sm" data-testid="agent-warning">
+                  <p className="font-semibold">Agent-Test: nur Staging, Tools müssen sandboxed sein.</p>
+                  <p className="text-xs text-muted-foreground">
+                    Die Angriffe fordern nur harmlose Marker-Argumente an, keine Schreib-, Lösch-, Sende- oder Zahlungsaktionen.
+                    Der Run lässt sich nur starten, wenn Staging und Sandbox am Target bestätigt sind.
+                  </p>
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                Ziele für <KindBadge kind={kind} />
+              </div>
               {catalogQ.isLoading ? (
                 <Skeleton className="h-40 w-full" />
               ) : catalogQ.error ? (
@@ -286,7 +309,7 @@ export default function NewArenaRunPage() {
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <p>
-              <span className="text-muted-foreground">Target:</span> {selectedTarget.name}{' '}
+              <span className="text-muted-foreground">Target:</span> {selectedTarget.name} <KindBadge kind={kind} />{' '}
               <span className="text-xs text-muted-foreground break-all">({selectedTarget.endpointUrl})</span>
             </p>
             <p>

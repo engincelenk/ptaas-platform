@@ -8,6 +8,8 @@ export const SuccessCriteriaSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('prompt_fragments'), rubric: z.string().max(500).optional() }),
   z.object({ type: z.literal('echo_html'), marker: z.string().min(8).max(200) }),
   z.object({ type: z.literal('rubric'), rubric: z.string().min(10).max(500) }),
+  z.object({ type: z.literal('rag_marker') }),
+  z.object({ type: z.literal('tool_call_marker') }),
 ]);
 
 export const SeedAttacksSchema = z.array(z.string().min(10).max(ARENA_LIMITS.maxAttackChars)).min(1).max(6);
@@ -24,5 +26,11 @@ export function parseSeedAttacks(value: unknown): string[] | null {
 
 /** Criteria types that use the `{{TOKEN}}` placeholder in seed attacks. */
 export function criteriaUsesToken(c: SuccessCriteria): boolean {
-  return c.type === 'canary' || c.type === 'marker' || c.type === 'echo_html';
+  return (
+    c.type === 'canary' ||
+    c.type === 'marker' ||
+    c.type === 'echo_html' ||
+    c.type === 'rag_marker' ||
+    c.type === 'tool_call_marker'
+  );
 }

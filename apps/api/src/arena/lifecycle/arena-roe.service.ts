@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 
-export const CURRENT_ROE_VERSION = 1;
+export const CURRENT_ROE_VERSION = 2;
 
 /** Rules of Engagement, version 1. Immutable once stored: a text change requires a new version. */
 export const ROE_V1_CONTENT = `REGELWERK FÜR DEN EINSATZ (RULES OF ENGAGEMENT) — AI ARENA, VERSION 1
@@ -37,6 +37,24 @@ Der Freigebende bestätigt, dazu berechtigt zu sein, den Test im Namen der Organ
 10. Freigabe
 Die Freigabe erfolgt ausschließlich durch einen Administrator der Organisation, wird mit Name, Zeitstempel und dieser Regelwerk-Version protokolliert und gilt nur für den freigegebenen Lauf.`;
 
+/**
+ * Rules of Engagement, version 2: version 1 plus target-kind specific terms (RAG, agent, widget).
+ * Version 1 stays unchanged in the database; approvals given under it are outdated (ROE_OUTDATED).
+ */
+export const ROE_V2_CONTENT = `${ROE_V1_CONTENT.replace('VERSION 1', 'VERSION 2')}
+
+11. Zusätzliche Bedingungen je Zieltyp
+Die folgenden Bedingungen gelten zusätzlich, abhängig vom Zieltyp der freigegebenen Anwendung.
+
+11.1 RAG-Anwendungen (Wissensbasis)
+Der Freigebende willigt ein, dass PTaaS eindeutig markierte Testdokumente mit harmlosem Inhalt in die Wissensbasis einspeist und nach dem Lauf wieder entfernt. Es werden ausschließlich synthetische Testdaten verwendet, keine Echtdaten. Schlägt die Entfernung fehl, wird der Kunde darüber informiert und muss die markierten Dokumente selbst löschen. Im Modus MANUAL platziert der Kunde die Testdokumente selbst und bestätigt dies.
+
+11.2 Agenten mit Werkzeugen
+Agenten werden ausschließlich in einer Staging-Umgebung getestet. Die Werkzeuge sind sandboxed bzw. im Dry-Run-Modus, es werden keine echten Aktionen ausgelöst (kein Schreiben, Löschen, Senden oder Bezahlen). Die von PTaaS verwendeten Marker-Argumente sind wirkungslos. Der Freigebende bestätigt Staging-Umgebung und Sandbox ausdrücklich; ohne diese Bestätigungen startet kein Lauf.
+
+11.3 Web-Widgets
+PTaaS bedient das Widget über eine automatisierte Browsersitzung auf der verifizierten Domain. Während der Sitzung ist der Netzwerkzugriff auf diese Domain beschränkt; Zugriffe auf andere Hosts werden blockiert. Es werden keine Dateien heruntergeladen und keine Berechtigungen erteilt.`;
+
 export function hashRoe(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
@@ -63,18 +81,27 @@ export class ArenaRoeService implements OnModuleInit {
     }
   }
 
-  /** Upserts the current version. Stored versions are immutable (update is empty). */
+  /** Upserts all known versions (v1 stays for old approvals). Stored versions are immutable (update is empty). */
   async ensureCurrent(): Promise<RoeView> {
-    const contentHash = hashRoe(ROE_V1_CONTENT);
-    const row = await this.prisma.arenaRoe.upsert({
-      where: { version: CURRENT_ROE_VERSION },
-      create: { version: CURRENT_ROE_VERSION, content: ROE_V1_CONTENT, contentHash },
-      update: {},
-    });
-    if (row.contentHash !== contentHash) {
-      this.log.error(`Stored RoE v${CURRENT_ROE_VERSION} differs from code — bump the version instead of editing`);
+    let current: RoeView | undefined;
+    for (const [version, content] of [
+      [1, ROE_V1_CONTENT],
+      [CURRENT_ROE_VERSION, ROE_V2_CONTENT],
+    ] as const) {
+      const contentHash = hashRoe(content);
+      const row = await this.prisma.arenaRoe.upsert({
+        where: { version },
+        create: { version, content, contentHash },
+        update: {},
+      });
+      if (row.contentHash !== contentHash) {
+        this.log.error(`Stored RoE v${version} differs from code — bump the version instead of editing`);
+      }
+      if (version === CURRENT_ROE_VERSION) {
+        current = { id: row.id, version: row.version, content: row.content, contentHash: row.contentHash };
+      }
     }
-    return { id: row.id, version: row.version, content: row.content, contentHash: row.contentHash };
+    return current as RoeView;
   }
 
   /** The newest stored version. */

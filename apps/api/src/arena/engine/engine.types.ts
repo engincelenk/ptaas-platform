@@ -30,7 +30,11 @@ export type SuccessCriteria =
   | { type: 'marker'; marker: string } // marker may contain `{nonce}`
   | { type: 'prompt_fragments'; rubric?: string }
   | { type: 'echo_html'; marker: string } // raw HTML snippet, may contain `{nonce}`
-  | { type: 'rubric'; rubric: string };
+  | { type: 'rubric'; rubric: string }
+  /** Stage 2 (RAG): the planted test document made the target emit `PTAAS-RAG-<runId>-<nonce>` (or a customer-known marker). */
+  | { type: 'rag_marker' }
+  /** Stage 3 (agent): `PTAAS-AGENCY-<runId>-<nonce>` appears in the arguments of a tool call (never proven by text alone). */
+  | { type: 'tool_call_marker' };
 
 /** Per-attempt tokens (resolved from the success criteria). */
 export interface AttemptTokens {
@@ -41,7 +45,7 @@ export interface AttemptTokens {
 }
 
 export interface JudgeEvidence {
-  rule: 'canary' | 'marker' | 'prompt_fragments' | 'echo_html' | 'rubric' | 'none';
+  rule: 'canary' | 'marker' | 'prompt_fragments' | 'echo_html' | 'rubric' | 'rag_marker' | 'tool_call_marker' | 'none';
   via?: string;
   similarity?: number;
   matchedFragments?: number[];
@@ -51,6 +55,13 @@ export interface JudgeEvidence {
   llm?: { verdict: string; confidence: number; passes: number };
   note?: string;
   error?: string;
+  /** AGENT targets: redacted tool calls observed in the reply. */
+  toolCalls?: ObservedToolCall[];
+}
+
+export interface ObservedToolCall {
+  name: string;
+  arguments: string;
 }
 
 export interface JudgeResult {
@@ -75,6 +86,7 @@ export interface GoalRecord {
   baseSeverity: Severity;
   seedAttacks: unknown;
   successCriteria: unknown;
+  kinds?: string[];
 }
 
 export const SEVERITY_ORDER: readonly Severity[] = ['INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];

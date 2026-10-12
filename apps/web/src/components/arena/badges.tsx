@@ -1,5 +1,6 @@
+import { KIND_CLASS, KIND_LABEL } from '@/lib/arena-kinds';
 import { runStatusClass, runStatusLabel, VERDICT_CLASS, VERDICT_LABEL } from '@/lib/arena-logic';
-import type { ArenaVerdict } from '@/lib/arena-types';
+import type { ArenaTargetKind, ArenaVerdict } from '@/lib/arena-types';
 
 export function RunStatusBadge({ status }: { status: string }) {
   return (
@@ -24,6 +25,14 @@ export function VerdictBadge({ verdict }: { verdict: ArenaVerdict | null }) {
       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${VERDICT_CLASS[verdict]}`}
     >
       {VERDICT_LABEL[verdict]}
+    </span>
+  );
+}
+
+export function KindBadge({ kind }: { kind: ArenaTargetKind }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${KIND_CLASS[kind]}`}>
+      {KIND_LABEL[kind]}
     </span>
   );
 }
