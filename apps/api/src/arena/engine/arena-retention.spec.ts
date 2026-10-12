@@ -3,7 +3,12 @@ import type { AuditService } from '../../audit/audit.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { ArenaEvent } from '../arena-events';
 import type { ArenaEventsService } from '../arena-events.service';
-import { ArenaRetentionService, RETENTION_LOCK_KEY, RETENTION_PLACEHOLDER } from './arena-retention.service';
+import {
+  ArenaRetentionService,
+  RETENTION_INTERVAL_MS,
+  RETENTION_LOCK_KEY,
+  RETENTION_PLACEHOLDER,
+} from './arena-retention.service';
 
 const NOW = new Date('2026-10-12T12:00:00Z');
 
@@ -118,12 +123,12 @@ describe('ArenaRetentionService', () => {
     await expect(svc.tick(NOW)).resolves.toBeNull();
   });
 
-  it('starts an interval every 6 hours and clears it on destroy', () => {
+  it('starts an interval every RETENTION_INTERVAL_MS and clears it on destroy', () => {
     vi.useFakeTimers();
     const { svc } = setup();
     const spy = vi.spyOn(svc, 'tick').mockResolvedValue(null);
     svc.onModuleInit();
-    vi.advanceTimersByTime(6 * 3600 * 1000 + 1);
+    vi.advanceTimersByTime(RETENTION_INTERVAL_MS + 1);
     expect(spy).toHaveBeenCalledTimes(1);
     svc.onModuleDestroy();
     vi.advanceTimersByTime(12 * 3600 * 1000);
