@@ -2,7 +2,8 @@ type Loose = { [key: string]: Loose } & string;
 import { describe, it, expect, vi } from 'vitest';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { CryptoService } from '../../crypto/crypto.service';
-import { AiTargetsService, aiTargetAad, isProviderHost, parseArenaEndpoint } from './ai-targets.service';
+import { isProviderHost } from '../arena.constants';
+import { AiTargetsService, aiTargetAad, assertHeaderName, assertMapping, parseArenaEndpoint } from './ai-targets.service';
 import type { ArenaActor } from './arena-views';
 
 const KEY = 'a'.repeat(64);
@@ -57,8 +58,10 @@ function setup(opts: { resolveSafe?: ReturnType<typeof vi.fn> } = {}) {
       update: vi.fn().mockResolvedValue(row()),
       delete: vi.fn().mockResolvedValue({}),
     },
-    arenaRun: { count: vi.fn().mockResolvedValue(0) },
+    arenaRun: { count: vi.fn().mockResolvedValue(0), updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
+    $transaction: vi.fn(),
   };
+  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => Promise.resolve(cb(prisma)));
   const audit = { log: vi.fn() };
   const ssrf = { resolveSafe: opts.resolveSafe ?? vi.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]) };
   const verification = { verify: vi.fn().mockResolvedValue({ success: true, message: 'ok' }) };
@@ -284,5 +287,75 @@ describe('AiTargetsService update/remove', () => {
     const { svc, prisma } = setup();
     await svc.remove('ai1', actor);
     expect(prisma.aiTarget.delete).toHaveBeenCalledWith({ where: { id: 'ai1' } });
+  });
+});
+
+describe('header and mapping hardening', () => {
+  it('rejects forbidden and malformed auth header names', () => {
+    const bad = ['Host', 'content-length', 'Transfer-Encoding', 'Proxy-Authorization', 'Sec-Fetch-Mode', 'X-Forwarded-For', 'Cookie', '1abc', 'a b', 'x:y', 'a'.repeat(65), 'Auth\r\nX: y'];
+    for (const name of bad) expect(() => assertHeaderName(name), name).toThrow(BadRequestException);
+    for (const ok of ['Authorization', 'X-Api-Key', 'api-key']) expect(() => assertHeaderName(ok)).not.toThrow();
+  });
+
+  it('create/update reject a forbidden header name', async () => {
+    const { svc, prisma } = setup();
+    await expect(svc.create({ ...baseDto, authHeaderName: 'Host' }, actor)).rejects.toThrow(BadRequestException);
+    await expect(svc.update('ai1', { authHeaderName: 'Cookie' }, actor)).rejects.toThrow(BadRequestException);
+    expect(prisma.aiTarget.create).not.toHaveBeenCalled();
+    expect(prisma.aiTarget.update).not.toHaveBeenCalled();
+  });
+
+  it('mapping: rejects tool/prototype keys on any level, too deep, and too large', () => {
+    for (const key of ['tools', 'tool_choice', 'functions', 'function_call', 'constructor', 'prototype']) {
+      expect(() => assertMapping({ a: { b: [{ [key]: 1 }] } }, 'requestMapping'), key).toThrow(/forbidden key/);
+      expect(() => assertMapping({ [key.toUpperCase()]: 1 }, 'requestMapping')).toThrow(/forbidden key/);
+    }
+    expect(() => assertMapping(JSON.parse('{"__proto__": {"x": 1}}'), 'requestMapping')).toThrow(/forbidden key/);
+    expect(() => assertMapping({ a: { b: { c: { d: { e: { f: 1 } } } } } }, 'requestMapping')).toThrow(/deeply/);
+    expect(() => assertMapping({ a: { b: { c: { d: { e: 1 } } } } }, 'requestMapping')).not.toThrow();
+    expect(() => assertMapping({ a: 'x'.repeat(4100) }, 'responseMapping')).toThrow(/exceeds/);
+    expect(() => assertMapping({ messages: [{ role: 'user', content: '{{prompt}}' }] }, 'requestMapping')).not.toThrow();
+  });
+
+  it('create/update reject a bad mapping', async () => {
+    const { svc } = setup();
+    await expect(svc.create({ ...baseDto, requestMapping: { tools: [] } }, actor)).rejects.toThrow(BadRequestException);
+    await expect(svc.update('ai1', { responseMapping: { function_call: 1 } }, actor)).rejects.toThrow(BadRequestException);
+  });
+});
+
+describe('approval is bound to the configuration', () => {
+  it.each([
+    ['endpointUrl', { endpointUrl: 'https://chat.example.com/v2' }],
+    ['adapter', { adapter: 'ANTHROPIC' as const }],
+    ['requestMapping', { requestMapping: { a: 1 } }],
+    ['responseMapping', { responseMapping: { a: 1 } }],
+    ['authHeaderName', { authHeaderName: 'X-Key' }],
+    ['apiKey', { apiKey: 'sk-new' }],
+    ['knownPromptFragments', { knownPromptFragments: ['x'] }],
+  ])('changing %s resets DRAFT/AWAITING/APPROVED runs to DRAFT and clears approval, in one transaction', async (_n, dto) => {
+    const { svc, prisma } = setup();
+    await svc.update('ai1', dto, actor);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.arenaRun.updateMany).toHaveBeenCalledWith({
+      where: { aiTargetId: 'ai1', organizationId: 'org1', status: { in: ['DRAFT', 'AWAITING_APPROVAL', 'APPROVED'] } },
+      data: { status: 'DRAFT', approvedById: null, approvedByName: null, approvedAt: null, roeId: null, emergencyContact: null },
+    });
+  });
+
+  it('a pure rename does not touch runs', async () => {
+    const { svc, prisma } = setup();
+    await svc.update('ai1', { name: 'New name' }, actor);
+    expect(prisma.arenaRun.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a RUNNING run blocks configuration changes with 409 TARGET_BUSY and nothing is written', async () => {
+    const { svc, prisma } = setup();
+    prisma.arenaRun.count.mockResolvedValue(1);
+    const err = await svc.update('ai1', { adapter: 'ANTHROPIC' }, actor).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({ code: 'TARGET_BUSY' });
+    expect(prisma.aiTarget.update).not.toHaveBeenCalled();
+    expect(prisma.arenaRun.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -12,7 +12,7 @@ import { CryptoService } from '../../crypto/crypto.service';
 import { SsrfGuardService } from '../../ssrf/ssrf-guard.service';
 import { VerificationService } from '../../targets/verification.service';
 import { isVerificationFresh } from '../../targets/verification-ttl';
-import { ARENA_LIMITS, PROVIDER_HOST_DENYLIST } from '../arena.constants';
+import { ARENA_LIMITS, isForbiddenHeaderName, isProviderHost } from '../arena.constants';
 import type { CreateAiTargetDto, UpdateAiTargetDto, VerificationMethodName } from '../dto/arena.dto';
 import type { AiTargetView, ArenaActor, RequestMeta, VerificationView } from './arena-views';
 
@@ -25,9 +25,52 @@ export function aiTargetAad(organizationId: string, aiTargetId: string, field: '
   return `${organizationId}:${aiTargetId}:${field}`;
 }
 
-export function isProviderHost(host: string): boolean {
-  const h = host.toLowerCase().replace(/\.$/, '');
-  return PROVIDER_HOST_DENYLIST.some((d) => h === d || h.endsWith(`.${d}`));
+const CONFIG_FIELDS = [
+  'endpointUrl',
+  'adapter',
+  'requestMapping',
+  'responseMapping',
+  'authHeaderName',
+  'apiKey',
+  'knownPromptFragments',
+] as const;
+const HEADER_NAME = /^[A-Za-z][A-Za-z0-9-]{0,63}$/;
+const FORBIDDEN_TEMPLATE_KEYS = new Set(['tools', 'tool_choice', 'functions', 'function_call', '__proto__', 'constructor', 'prototype']);
+export const MAPPING_MAX_BYTES = 4096;
+export const MAPPING_MAX_DEPTH = 6;
+
+/** Auth header name for the customer endpoint: plain token syntax, never a smuggling-prone header. */
+export function assertHeaderName(name: string): void {
+  if (!HEADER_NAME.test(name) || isForbiddenHeaderName(name)) {
+    throw new BadRequestException('authHeaderName is not allowed');
+  }
+}
+
+/** Request/response mapping templates: bounded size and depth, no tool/prototype keys on any level. */
+export function assertMapping(value: unknown, field: string): void {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value) ?? '';
+  } catch {
+    throw new BadRequestException(`${field} is not valid JSON`);
+  }
+  if (Buffer.byteLength(serialized, 'utf8') > MAPPING_MAX_BYTES) {
+    throw new BadRequestException(`${field} exceeds ${MAPPING_MAX_BYTES} bytes`);
+  }
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > MAPPING_MAX_DEPTH) throw new BadRequestException(`${field} is nested too deeply`);
+    if (Array.isArray(node)) {
+      node.forEach((n) => walk(n, depth + 1));
+    } else if (node && typeof node === 'object') {
+      for (const key of Object.getOwnPropertyNames(node)) {
+        if (FORBIDDEN_TEMPLATE_KEYS.has(key.toLowerCase())) {
+          throw new BadRequestException(`${field} contains the forbidden key "${key}"`);
+        }
+        walk((node as Record<string, unknown>)[key], depth + 1);
+      }
+    }
+  };
+  walk(value, 1);
 }
 
 /**
@@ -91,6 +134,7 @@ export class AiTargetsService {
     });
     if (!project) throw new NotFoundException('Project not found');
 
+    this.assertConfig(dto);
     const url = await this.assertEndpoint(dto.endpointUrl);
     const value = url.toString();
 
@@ -167,6 +211,7 @@ export class AiTargetsService {
   async update(id: string, dto: UpdateAiTargetDto, actor: ArenaActor, meta: RequestMeta = {}): Promise<AiTargetView> {
     const org = actor.organizationId;
     const current = await this.load(id, org);
+    this.assertConfig(dto);
     const data: Prisma.AiTargetUpdateInput = {};
 
     if (dto.name !== undefined) data.name = dto.name.trim();
@@ -198,9 +243,42 @@ export class AiTargetsService {
       }
     }
 
+    // Any change of the tested configuration voids approvals given for the old one.
+    const configChanged = CONFIG_FIELDS.some((f) => dto[f] !== undefined);
+
     let row: AiTargetWithTarget;
+    let resetRuns = 0;
     try {
-      row = await this.prisma.aiTarget.update({ where: { id }, data, include: { target: true } });
+      ({ row, resetRuns } = await this.prisma.$transaction(async (tx) => {
+        if (configChanged) {
+          const running = await tx.arenaRun.count({ where: { aiTargetId: id, organizationId: org, status: 'RUNNING' } });
+          if (running > 0) {
+            throw new ConflictException({
+              statusCode: 409,
+              error: 'Conflict',
+              code: 'TARGET_BUSY',
+              message: 'A run is currently running against this target — configuration cannot be changed',
+            });
+          }
+        }
+        const updated = await tx.aiTarget.update({ where: { id }, data, include: { target: true } });
+        let count = 0;
+        if (configChanged) {
+          const res = await tx.arenaRun.updateMany({
+            where: { aiTargetId: id, organizationId: org, status: { in: ['DRAFT', 'AWAITING_APPROVAL', 'APPROVED'] } },
+            data: {
+              status: 'DRAFT',
+              approvedById: null,
+              approvedByName: null,
+              approvedAt: null,
+              roeId: null,
+              emergencyContact: null,
+            },
+          });
+          count = res.count;
+        }
+        return { row: updated, resetRuns: count };
+      }));
     } catch (err: unknown) {
       if ((err as { code?: string }).code === 'P2002') {
         throw new ConflictException('This endpoint is already registered in the project');
@@ -217,6 +295,7 @@ export class AiTargetsService {
       metadata: {
         fields: Object.keys(dto).filter((k) => k !== 'apiKey' && k !== 'knownPromptFragments'),
         secretsChanged: dto.apiKey !== undefined || dto.knownPromptFragments !== undefined,
+        approvalsReset: resetRuns,
       },
       ipAddress: meta.ip,
       userAgent: meta.userAgent,
@@ -295,6 +374,16 @@ export class AiTargetsService {
     const url = parseArenaEndpoint(raw);
     await this.ssrfGuard.resolveSafe(url.hostname);
     return url;
+  }
+
+  private assertConfig(dto: {
+    authHeaderName?: string;
+    requestMapping?: Record<string, unknown>;
+    responseMapping?: Record<string, unknown>;
+  }): void {
+    if (dto.authHeaderName) assertHeaderName(dto.authHeaderName.trim());
+    if (dto.requestMapping !== undefined) assertMapping(dto.requestMapping, 'requestMapping');
+    if (dto.responseMapping !== undefined) assertMapping(dto.responseMapping, 'responseMapping');
   }
 
   private async load(id: string, organizationId: string): Promise<AiTargetWithTarget> {

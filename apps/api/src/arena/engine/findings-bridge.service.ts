@@ -73,12 +73,6 @@ export class FindingsBridgeService {
    * this (run, goal) already carries a finding, that one is returned.
    */
   async createForBreach(ctx: BridgeContext, goal: BridgeGoal, best: BreachCandidate): Promise<string> {
-    const existing = await this.prisma.arenaAttempt.findFirst({
-      where: { runId: ctx.runId, organizationId: ctx.organizationId, goalId: goal.id, findingId: { not: null } },
-      select: { findingId: true },
-    });
-    if (existing?.findingId) return existing.findingId;
-
     const advice = CATEGORY_ADVICE[goal.category];
     const proof = best.deterministic ? 'deterministischer Beweis' : `LLM-Judge, reproduziert ${best.repro.k}/${best.repro.n}`;
     const description = [
@@ -95,37 +89,49 @@ export class FindingsBridgeService {
       `Tests: ${advice.tests}`,
     ].join('\n');
 
-    const finding = await this.prisma.finding.create({
-      data: {
-        title: `[AI Arena] ${goal.title}`,
-        description,
-        severity: best.severity,
-        templateId: goal.key,
-        templateName: goal.title,
-        matchedAt: ctx.endpointUrl,
-        httpRequest: best.attackText,
-        httpResponse: best.responseText,
-        cweIds: CWE_BY_CATEGORY[goal.category],
-        cveIds: [],
-        owasp: goal.owaspRef,
-        aiRemediation: remediation,
-        scanId: ctx.scanId,
-        targetId: ctx.targetId,
-        projectId: ctx.projectId,
-        organizationId: ctx.organizationId,
-        createdById: ctx.createdById,
-      },
-    });
+    const { findingId, created } = await this.prisma.$transaction(async (tx) => {
+      // Serialize concurrent workers per (run, goal): the lock is held until the transaction ends.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`arena-finding:${ctx.runId}:${goal.id}`}))`;
+      const existing = await tx.arenaAttempt.findFirst({
+        where: { runId: ctx.runId, organizationId: ctx.organizationId, goalId: goal.id, findingId: { not: null } },
+        select: { findingId: true },
+      });
+      if (existing?.findingId) return { findingId: existing.findingId, created: false };
+      const finding = await tx.finding.create({
+        data: {
+          title: `[AI Arena] ${goal.title}`,
+          description,
+          severity: best.severity,
+          templateId: goal.key,
+          templateName: goal.title,
+          matchedAt: ctx.endpointUrl,
+          httpRequest: best.attackText,
+          httpResponse: best.responseText,
+          cweIds: CWE_BY_CATEGORY[goal.category],
+          cveIds: [],
+          owasp: goal.owaspRef,
+          aiRemediation: remediation,
+          scanId: ctx.scanId,
+          targetId: ctx.targetId,
+          projectId: ctx.projectId,
+          organizationId: ctx.organizationId,
+          createdById: ctx.createdById,
+        },
+      });
 
-    await this.prisma.arenaAttempt.updateMany({
-      where: { id: best.attemptId, organizationId: ctx.organizationId },
-      data: { findingId: finding.id },
+      await tx.arenaAttempt.updateMany({
+        where: { id: best.attemptId, organizationId: ctx.organizationId },
+        data: { findingId: finding.id },
+      });
+
+      return { findingId: finding.id, created: true };
     });
+    if (!created) return findingId;
     await this.events.publish(ctx.organizationId, ctx.runId, {
       type: 'finding',
-      findingId: finding.id,
+      findingId: findingId,
       attemptId: best.attemptId,
     });
-    return finding.id;
+    return findingId;
   }
 }

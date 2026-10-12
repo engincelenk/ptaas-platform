@@ -1,6 +1,20 @@
-import { Controller, Get, Logger, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpException,
+  HttpStatus,
+  Logger,
+  Param,
+  Post,
+  Query,
+  Res,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
+import { RedisService } from '../../redis/redis.service';
+import { arenaRedisKeys } from '../arena.constants';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../../auth/strategies/jwt.strategy';
@@ -12,18 +26,23 @@ import { ArenaScoreboardService } from './arena-scoreboard.service';
 import { ArenaStreamTicketService } from './arena-stream-ticket.service';
 
 export const SSE_HEARTBEAT_MS = 20_000;
+/** Max. concurrent SSE connections per organization (per API instance). */
+export const MAX_SSE_PER_ORG = 20;
+const TICKET_USED_TTL_SECONDS = 120;
 const TERMINAL = new Set(['COMPLETED', 'ABORTED', 'FAILED']);
 
 @ApiTags('arena')
 @Controller('arena/runs')
 export class ArenaStreamController {
   private readonly log = new Logger(ArenaStreamController.name);
+  private readonly connections = new Map<string, number>();
 
   constructor(
     private readonly tickets: ArenaStreamTicketService,
     private readonly runs: ArenaRunsService,
     private readonly scoreboard: ArenaScoreboardService,
     private readonly events: ArenaEventsService,
+    private readonly redis: RedisService,
   ) {}
 
   @Post(':id/stream-ticket')
@@ -47,6 +66,14 @@ export class ArenaStreamController {
     const orgId = payload.organizationId;
     const status = await this.runs.statusOf(id, orgId); // throws 404 for foreign runs
 
+    if ((this.connections.get(orgId) ?? 0) >= MAX_SSE_PER_ORG) {
+      throw new HttpException('Too many open streams', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    // A ticket is single use (replay of a leaked URL fails).
+    const fresh = await this.redis.setIfAbsent(arenaRedisKeys.ticketUsed(payload.jti), '1', TICKET_USED_TTL_SECONDS);
+    if (!fresh) throw new UnauthorizedException('Stream ticket already used');
+    this.connections.set(orgId, (this.connections.get(orgId) ?? 0) + 1);
+
     res.status(200);
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -67,6 +94,9 @@ export class ArenaStreamController {
     const cleanup = (): void => {
       if (closed) return;
       closed = true;
+      const left = (this.connections.get(orgId) ?? 1) - 1;
+      if (left <= 0) this.connections.delete(orgId);
+      else this.connections.set(orgId, left);
       if (heartbeat) clearInterval(heartbeat);
       unsubscribe?.();
       if (!res.writableEnded) res.end();

@@ -33,7 +33,32 @@ export const PROVIDER_HOST_DENYLIST = [
   'openrouter.ai',
   'api.x.ai',
   'api.deepseek.com',
+  'api.perplexity.ai',
+  'api.fireworks.ai',
+  'api.replicate.com',
+  'api.ai21.com',
+  'api-inference.huggingface.co',
+  'openai.azure.com',          // *.openai.azure.com (matched as suffix)
+  'amazonaws.com',             // bedrock-runtime.*.amazonaws.com etc. (matched as suffix)
+  'googleapis.com',            // vertex / generative language (matched as suffix)
 ];
+
+/** True if `host` is a provider host or a subdomain of one. Case/trailing-dot insensitive. */
+export function isProviderHost(host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/\.$/, '');
+  return PROVIDER_HOST_DENYLIST.some((d) => h === d || h.endsWith(`.${d}`));
+}
+
+/** Header names that must never be set from customer-supplied config (smuggling / host override). */
+export const FORBIDDEN_HEADER_NAMES = [
+  'host', 'content-length', 'content-type', 'content-encoding', 'transfer-encoding', 'connection',
+  'upgrade', 'te', 'trailer', 'expect', 'user-agent', 'cookie', 'set-cookie', 'forwarded',
+  'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip', 'keep-alive',
+];
+export function isForbiddenHeaderName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return FORBIDDEN_HEADER_NAMES.includes(n) || n.startsWith('proxy-') || n.startsWith('sec-');
+}
 
 /** Roles allowed to prepare/submit/start/abort runs and manage targets. */
 export const ARENA_OPERATOR_ROLES = ['ADMIN', 'SECURITY_ENGINEER'] as const;
@@ -43,6 +68,9 @@ export const ARENA_APPROVER_ROLES = ['ADMIN'] as const;
 export const arenaRedisKeys = {
   killGlobal: () => 'arena:kill:global',
   killRun: (runId: string) => `arena:kill:run:${runId}`,
+  killOrg: (organizationId: string) => `arena:kill:org:${organizationId}`,
+  targetLock: (aiTargetId: string) => `arena:target-lock:${aiTargetId}`,
+  ticketUsed: (jti: string) => `arena:ticket-used:${jti}`,
   eventsChannel: (organizationId: string, runId: string) => `arena:events:${organizationId}:${runId}`,
   orgDailyRequests: (organizationId: string, yyyymmdd: string) => `arena:daily:${organizationId}:${yyyymmdd}`,
 };

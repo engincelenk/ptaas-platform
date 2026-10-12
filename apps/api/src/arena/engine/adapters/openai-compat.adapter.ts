@@ -1,7 +1,8 @@
 import { SafeHttpService } from '../../../ssrf/safe-http.service';
 import type { AdapterClock, AdapterConfig } from './adapter.types';
 import { BaseArenaAdapter, BuiltRequest } from './base.adapter';
-import { getAtPath } from './json-path';
+import { getAtPath, templateProblem } from './json-path';
+import { TargetUnsafeError } from '../run-control';
 
 interface OpenAiMapping {
   model?: string;
@@ -18,6 +19,8 @@ export class OpenAiCompatAdapter extends BaseArenaAdapter {
     const mapping = (this.config.requestMapping ?? {}) as OpenAiMapping;
     const body: Record<string, unknown> = {};
     if (mapping.extra && typeof mapping.extra === 'object') {
+      const problem = templateProblem(mapping.extra);
+      if (problem) throw new TargetUnsafeError(`Invalid request template: ${problem}`);
       for (const [k, v] of Object.entries(mapping.extra)) {
         if (k !== '__proto__' && k !== 'messages') body[k] = v;
       }

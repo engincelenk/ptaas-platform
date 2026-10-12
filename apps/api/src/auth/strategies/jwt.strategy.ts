@@ -18,11 +18,13 @@ export interface JwtPayload {
  * Extracts token from Bearer header OR ?token= query param.
  * Query param is needed for SSE (EventSource doesn't support custom headers).
  */
-function extractToken(req: Request): string | null {
+export function extractToken(req: Request): string | null {
   // Prefer Authorization header
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7);
-  // Fallback: query param (SSE only)
+  // Fallback: query param, GET only (downloads / EventSource). Never for state-changing methods,
+  // so a token leaked into a URL cannot be replayed for POST/PATCH/DELETE.
+  if (req.method !== 'GET') return null;
   const queryToken = req.query?.token;
   if (typeof queryToken === 'string') return queryToken;
   return null;

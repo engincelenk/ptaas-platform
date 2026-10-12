@@ -5,6 +5,21 @@ import { SsrfGuardService } from './ssrf-guard.service';
 
 const DEFAULT_PORTS = [80, 443];
 
+/** Headers that control framing/routing must never come from caller-supplied maps. */
+const STRIPPED_HEADERS = new Set([
+  'host', 'content-length', 'transfer-encoding', 'connection', 'upgrade', 'te', 'trailer',
+  'expect', 'keep-alive',
+]);
+
+export function stripHopByHopHeaders(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([k]) => {
+      const n = k.toLowerCase();
+      return !STRIPPED_HEADERS.has(n) && !n.startsWith('proxy-');
+    }),
+  );
+}
+
 export interface SafeRequestOptions {
   method?: 'GET' | 'POST';
   headers?: Record<string, string>;
@@ -112,7 +127,7 @@ export class SafeHttpService {
       const lib = req.url.protocol === 'https:' ? https : http;
       const headers: Record<string, string | number> = {
         'User-Agent': 'PTaaS/1.0',
-        ...req.headers,
+        ...stripHopByHopHeaders(req.headers),
       };
       if (req.body) headers['Content-Length'] = Buffer.byteLength(req.body);
 

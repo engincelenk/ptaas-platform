@@ -13,6 +13,7 @@ import { arenaUtcDayKey, type ArenaActor } from './arena-views';
 
 const ADMIN: ArenaActor = { userId: 'u-admin', organizationId: 'org1', role: 'ADMIN' };
 const ENGINEER: ArenaActor = { userId: 'u-eng', organizationId: 'org1', role: 'SECURITY_ENGINEER' };
+const OPERATOR_ADMIN: ArenaActor = { ...ADMIN, email: 'ops@platform.example' };
 const ROE = { id: 'roe1', version: 1, content: 'RoE', contentHash: 'hash1' };
 const DAY = 86_400_000;
 
@@ -80,19 +81,27 @@ function setup(run: Record<string, unknown> = runRow()) {
     arenaRecommendation: { findMany: vi.fn().mockResolvedValue([]) },
     scan: { update: vi.fn().mockResolvedValue({}) },
     user: { findUnique: vi.fn().mockResolvedValue({ name: 'Ada Admin' }) },
+    organizationMember: { findFirst: vi.fn().mockResolvedValue({ role: 'ADMIN' }) },
   };
   const audit = { log: vi.fn(), logStrict: vi.fn().mockResolvedValue(undefined) };
-  const redis = { get: vi.fn().mockResolvedValue(null) };
+  const redis = {
+    get: vi.fn().mockResolvedValue(null),
+    setIfAbsent: vi.fn().mockResolvedValue(true),
+    del: vi.fn().mockResolvedValue(undefined),
+  };
   const ssrf = { resolveSafe: vi.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]) };
   const kill = {
     isKilled: vi.fn().mockResolvedValue(false),
     killRun: vi.fn().mockResolvedValue(undefined),
     setGlobal: vi.fn().mockResolvedValue(undefined),
+    setOrg: vi.fn().mockResolvedValue(undefined),
   };
   const roe = { getCurrent: vi.fn().mockResolvedValue(ROE) };
   const scoreboard = { compute: vi.fn() };
   const events = { publish: vi.fn().mockResolvedValue(undefined) };
   const queue = { add: vi.fn().mockResolvedValue({}) };
+  const env: Record<string, string | undefined> = {};
+  const config = { get: vi.fn().mockImplementation((k: string) => env[k]) };
   const svc = new ArenaRunsService(
     prisma as never,
     audit as never,
@@ -103,8 +112,9 @@ function setup(run: Record<string, unknown> = runRow()) {
     scoreboard as never,
     events as never,
     queue as never,
+    config as never,
   );
-  return { svc, prisma, audit, redis, ssrf, kill, roe, scoreboard, events, queue };
+  return { svc, prisma, audit, redis, ssrf, kill, roe, scoreboard, events, queue, env };
 }
 
 const code = async (p: Promise<unknown>): Promise<string | undefined> => {
@@ -222,7 +232,7 @@ describe('ArenaRunsService.approve', () => {
     confirmations: { noProduction: true, noSideEffects: true, noTools: true, providerTosAccepted: true },
   };
 
-  it('approves: stores name, time, roeId and contact; audit via logStrict BEFORE the state change', async () => {
+  it('approves: stores name, time, roeId and contact; conditional claim, then logStrict', async () => {
     const { svc, prisma, audit } = setup(runRow({ status: 'AWAITING_APPROVAL', roeId: null, roe: null }));
     const order: string[] = [];
     audit.logStrict.mockImplementation(() => {
@@ -234,7 +244,7 @@ describe('ArenaRunsService.approve', () => {
       return Promise.resolve({ count: 1 });
     });
     await svc.approve('run1', dto, ADMIN);
-    expect(order).toEqual(['audit', 'update']);
+    expect(order).toEqual(['update', 'audit']); // conditional claim first, audit second
     expect(audit.logStrict).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'arena.run.approved', metadata: { roeHash: 'hash1', roeVersion: 1 } }),
     );
@@ -282,11 +292,35 @@ describe('ArenaRunsService.approve', () => {
     expect(await code(svc.approve('run1', dto, ADMIN))).toBe('RUN_NOT_AWAITING_APPROVAL');
   });
 
-  it('a failing audit write prevents the approval', async () => {
+  it('a failing audit write rolls the approval back and answers 409 AUDIT_FAILED', async () => {
     const { svc, prisma, audit } = setup(runRow({ status: 'AWAITING_APPROVAL' }));
     audit.logStrict.mockRejectedValue(new Error('db down'));
-    await expect(svc.approve('run1', dto, ADMIN)).rejects.toThrow('db down');
-    expect(prisma.arenaRun.updateMany).not.toHaveBeenCalled();
+    expect(await code(svc.approve('run1', dto, ADMIN))).toBe('AUDIT_FAILED');
+    expect(prisma.arenaRun.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.arenaRun.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'run1', organizationId: 'org1', status: 'APPROVED', approvedById: 'u-admin' },
+      data: { status: 'AWAITING_APPROVAL', roeId: null, emergencyContact: null, approvedById: null, approvedByName: null, approvedAt: null },
+    });
+  });
+
+  it('a race loser writes no audit entry', async () => {
+    const { svc, prisma, audit } = setup(runRow({ status: 'AWAITING_APPROVAL' }));
+    prisma.arenaRun.updateMany.mockResolvedValue({ count: 0 });
+    expect(await code(svc.approve('run1', dto, ADMIN))).toBe('RUN_NOT_AWAITING_APPROVAL');
+    expect(audit.logStrict).not.toHaveBeenCalled();
+  });
+
+  it('re-reads the role from the database: a demoted or removed admin is rejected (403)', async () => {
+    for (const member of [{ role: 'VIEWER' }, { role: 'SECURITY_ENGINEER' }, null]) {
+      const { svc, prisma, audit } = setup(runRow({ status: 'AWAITING_APPROVAL' }));
+      prisma.organizationMember.findFirst.mockResolvedValue(member);
+      await expect(svc.approve('run1', dto, ADMIN)).rejects.toThrow(ForbiddenException);
+      expect(prisma.organizationMember.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'u-admin', organizationId: 'org1' } }),
+      );
+      expect(prisma.arenaRun.updateMany).not.toHaveBeenCalled();
+      expect(audit.logStrict).not.toHaveBeenCalled();
+    }
   });
 
   it('foreign org → 404', async () => {
@@ -299,8 +333,8 @@ describe('ArenaRunsService.approve', () => {
 describe('ArenaRunsService.start (preflight)', () => {
   beforeEach(() => vi.useRealTimers());
 
-  it('happy path: audit before claim before queue; RUNNING + scan RUNNING + job', async () => {
-    const { svc, prisma, audit, queue } = setup();
+  it('happy path: lock, then claim, then audit, then queue; RUNNING + scan RUNNING + job', async () => {
+    const { svc, prisma, audit, queue, redis } = setup();
     const order: string[] = [];
     audit.logStrict.mockImplementation(() => {
       order.push('audit');
@@ -315,7 +349,9 @@ describe('ArenaRunsService.start (preflight)', () => {
       return Promise.resolve({});
     });
     await svc.start('run1', 'org1', 'u-eng');
-    expect(order).toEqual(['audit', 'claim', 'queue']);
+    expect(order).toEqual(['claim', 'audit', 'queue']);
+    expect(redis.setIfAbsent).toHaveBeenCalledWith('arena:target-lock:ai1', 'run1', 45 * 60);
+    expect(redis.del).not.toHaveBeenCalled();
     expect(audit.logStrict).toHaveBeenCalledWith(expect.objectContaining({ action: 'arena.run.started', organizationId: 'org1', userId: 'u-eng' }));
     expect(prisma.arenaRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'run1', organizationId: 'org1', status: 'APPROVED' }, data: expect.objectContaining({ status: 'RUNNING' }) }),
@@ -408,7 +444,7 @@ describe('ArenaRunsService.start (preflight)', () => {
     const s = setup();
     s.kill.isKilled.mockResolvedValue(true);
     expect(await code(s.svc.start('run1', 'org1', 'u-eng'))).toBe('KILL_SWITCH');
-    expect(s.kill.isKilled).toHaveBeenCalledWith('run1');
+    expect(s.kill.isKilled).toHaveBeenCalledWith('run1', 'org1');
     expect(s.queue.add).not.toHaveBeenCalled();
   });
 
@@ -424,20 +460,44 @@ describe('ArenaRunsService.start (preflight)', () => {
     expect(s.queue.add).not.toHaveBeenCalled();
   });
 
-  it('7. a failing audit write prevents the start completely', async () => {
+  it('6c. an already held target lock (atomic) blocks the start', async () => {
+    const s = setup();
+    s.redis.setIfAbsent.mockResolvedValue(false);
+    expect(await code(s.svc.start('run1', 'org1', 'u-eng'))).toBe('TARGET_BUSY');
+    expect(s.prisma.arenaRun.updateMany).not.toHaveBeenCalled();
+    expect(s.audit.logStrict).not.toHaveBeenCalled();
+    expect(s.queue.add).not.toHaveBeenCalled();
+    expect(s.redis.del).not.toHaveBeenCalled(); // never release a lock we do not own
+  });
+
+  it('7. a failing audit write rolls the claim back, releases the lock and prevents the start', async () => {
     const s = setup();
     s.audit.logStrict.mockRejectedValue(new Error('audit table unavailable'));
     expect(await code(s.svc.start('run1', 'org1', 'u-eng'))).toBe('AUDIT_FAILED');
-    expect(s.prisma.arenaRun.updateMany).not.toHaveBeenCalled();
+    expect(s.prisma.arenaRun.updateMany).toHaveBeenCalledTimes(2);
+    expect(s.prisma.arenaRun.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'run1', organizationId: 'org1', status: 'RUNNING' },
+      data: { status: 'APPROVED', startedAt: null },
+    });
+    expect(s.redis.del).toHaveBeenCalledWith('arena:target-lock:ai1');
     expect(s.prisma.scan.update).not.toHaveBeenCalled();
     expect(s.queue.add).not.toHaveBeenCalled();
   });
 
-  it('a lost claim race (state changed concurrently) does not enqueue', async () => {
+  it('a lost claim race writes no audit entry, does not enqueue and releases the lock', async () => {
     const s = setup();
     s.prisma.arenaRun.updateMany.mockResolvedValue({ count: 0 });
     expect(await code(s.svc.start('run1', 'org1', 'u-eng'))).toBe('RUN_NOT_APPROVED');
+    expect(s.audit.logStrict).not.toHaveBeenCalled();
     expect(s.queue.add).not.toHaveBeenCalled();
+    expect(s.prisma.arenaRun.updateMany).toHaveBeenCalledTimes(1); // no revert: we never owned the claim
+    expect(s.redis.del).toHaveBeenCalledWith('arena:target-lock:ai1');
+  });
+
+  it('an org kill switch blocks the start (isKilled receives the organization)', async () => {
+    const s = setup();
+    s.kill.isKilled.mockImplementation((_r: string, org?: string) => Promise.resolve(org === 'org1'));
+    expect(await code(s.svc.start('run1', 'org1', 'u-eng'))).toBe('KILL_SWITCH');
   });
 
   it('a queue failure reverts the run to APPROVED', async () => {
@@ -447,6 +507,7 @@ describe('ArenaRunsService.start (preflight)', () => {
     expect(s.prisma.arenaRun.updateMany).toHaveBeenLastCalledWith(
       expect.objectContaining({ data: { status: 'APPROVED', startedAt: null } }),
     );
+    expect(s.redis.del).toHaveBeenCalledWith('arena:target-lock:ai1');
   });
 
   it('foreign org → 404 and nothing happens', async () => {
@@ -531,6 +592,7 @@ describe('ArenaRunsService.retest / setGlobalKill / reads', () => {
 
   it('global kill ON sets first then audits; OFF audits first (audit failure keeps it on)', async () => {
     const on = setup();
+    on.env.ARENA_PLATFORM_ADMINS = 'u-admin';
     const order: string[] = [];
     on.kill.setGlobal.mockImplementation(() => {
       order.push('set');
@@ -544,9 +606,80 @@ describe('ArenaRunsService.retest / setGlobalKill / reads', () => {
     expect(order).toEqual(['set', 'audit']);
 
     const off = setup();
+    off.env.ARENA_PLATFORM_ADMINS = 'u-admin';
     off.audit.logStrict.mockRejectedValue(new Error('x'));
     await expect(off.svc.setGlobalKill(false, ADMIN)).rejects.toThrow('x');
     expect(off.kill.setGlobal).not.toHaveBeenCalled();
+  });
+
+  it('global kill: an ordinary org admin is forbidden; unset/empty allowlist fails closed', async () => {
+    for (const value of [undefined, '', '  ,, ', 'someone-else,other@x.example']) {
+      const s = setup();
+      s.env.ARENA_PLATFORM_ADMINS = value;
+      await expect(s.svc.setGlobalKill(true, ADMIN)).rejects.toThrow(ForbiddenException);
+      expect(s.kill.setGlobal).not.toHaveBeenCalled();
+      expect(s.audit.logStrict).not.toHaveBeenCalled();
+    }
+  });
+
+  it('global kill: allowlist matches user id or e-mail (case-insensitive), role still re-read from the DB', async () => {
+    const byId = setup();
+    byId.env.ARENA_PLATFORM_ADMINS = 'x, u-admin ';
+    await expect(byId.svc.setGlobalKill(true, ADMIN)).resolves.toEqual({ on: true });
+    expect(byId.kill.setGlobal).toHaveBeenCalledWith(true);
+
+    const byMail = setup();
+    byMail.env.ARENA_PLATFORM_ADMINS = 'OPS@platform.example';
+    await expect(byMail.svc.setGlobalKill(true, OPERATOR_ADMIN)).resolves.toEqual({ on: true });
+
+    const demoted = setup();
+    demoted.env.ARENA_PLATFORM_ADMINS = 'u-admin';
+    demoted.prisma.organizationMember.findFirst.mockResolvedValue({ role: 'VIEWER' });
+    await expect(demoted.svc.setGlobalKill(true, ADMIN)).rejects.toThrow(ForbiddenException);
+    expect(demoted.kill.setGlobal).not.toHaveBeenCalled();
+  });
+
+  it('org kill: sets only the own organization, audits, and never touches the global switch', async () => {
+    const s = setup();
+    const order: string[] = [];
+    s.kill.setOrg.mockImplementation(() => {
+      order.push('set');
+      return Promise.resolve();
+    });
+    s.audit.logStrict.mockImplementation(() => {
+      order.push('audit');
+      return Promise.resolve();
+    });
+    await expect(s.svc.setOrgKill(true, { ...ADMIN, organizationId: 'org1' })).resolves.toEqual({ on: true });
+    expect(order).toEqual(['set', 'audit']);
+    expect(s.kill.setOrg).toHaveBeenCalledWith('org1', true);
+    expect(s.kill.setGlobal).not.toHaveBeenCalled();
+    expect(s.audit.logStrict).toHaveBeenCalledWith(expect.objectContaining({ action: 'arena.kill_switch.org', organizationId: 'org1' }));
+  });
+
+  it('org kill OFF audits first; audit failure keeps it on; non-admins (by DB role) are forbidden', async () => {
+    const off = setup();
+    off.audit.logStrict.mockRejectedValue(new Error('x'));
+    await expect(off.svc.setOrgKill(false, ADMIN)).rejects.toThrow('x');
+    expect(off.kill.setOrg).not.toHaveBeenCalled();
+
+    const eng = setup();
+    eng.prisma.organizationMember.findFirst.mockResolvedValue({ role: 'SECURITY_ENGINEER' });
+    await expect(eng.svc.setOrgKill(true, ADMIN)).rejects.toThrow(ForbiddenException);
+    expect(eng.kill.setOrg).not.toHaveBeenCalled();
+  });
+
+  it('emergencyContact is visible to operators only (null for DEVELOPER/VIEWER/unknown role)', async () => {
+    const s = setup();
+    expect((await s.svc.getView('run1', 'org1', 'ADMIN')).emergencyContact).toBe('+49 1');
+    expect((await s.svc.getView('run1', 'org1', 'SECURITY_ENGINEER')).emergencyContact).toBe('+49 1');
+    expect((await s.svc.getView('run1', 'org1', 'DEVELOPER')).emergencyContact).toBeNull();
+    expect((await s.svc.getView('run1', 'org1', 'VIEWER')).emergencyContact).toBeNull();
+    expect((await s.svc.getView('run1', 'org1')).emergencyContact).toBeNull();
+    s.scoreboard.compute.mockResolvedValue({ totals: { attempts: 0, breachRate: 0 } });
+    s.prisma.arenaGoal.findMany.mockResolvedValue([]);
+    expect((await s.svc.getDetail('run1', 'org1', 'VIEWER')).emergencyContact).toBeNull();
+    expect((await s.svc.getDetail('run1', 'org1', 'ADMIN')).emergencyContact).toBe('+49 1');
   });
 
   it('list/get/attempts/detail are tenant-scoped', async () => {

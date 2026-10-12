@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { ConfigService } from '@nestjs/config';
 import type { Queue } from 'bullmq';
 import type { Prisma } from '@ptaas/db';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -18,6 +19,8 @@ import { isVerificationFresh } from '../../targets/verification-ttl';
 import {
   ARENA_APPROVER_ROLES,
   ARENA_LIMITS,
+  ARENA_OPERATOR_ROLES,
+  isProviderHost,
   ARENA_RUN_QUEUE,
   arenaRedisKeys,
   type ArenaRunJob,
@@ -26,7 +29,6 @@ import type { ArenaAttemptView } from '../arena-events';
 import { ArenaEventsService } from '../arena-events.service';
 import { KillSwitchService } from '../kill-switch.service';
 import type { ApproveRunDto, CreateRunDto } from '../dto/arena.dto';
-import { isProviderHost } from './ai-targets.service';
 import { ArenaRoeService } from './arena-roe.service';
 import { ArenaScoreboardService } from './arena-scoreboard.service';
 import {
@@ -48,6 +50,9 @@ type RunRow = Prisma.ArenaRunGetPayload<{
 const TERMINAL = ['COMPLETED', 'ABORTED', 'FAILED'] as const;
 const PRE_RUN = ['DRAFT', 'AWAITING_APPROVAL', 'APPROVED'] as const;
 const ATTEMPTS_PAGE = 500;
+
+/** Max. lifetime of the per-target run lock (the engine releases it when the run ends). */
+export const TARGET_LOCK_TTL_SECONDS = 45 * 60;
 
 export const RUN_DEFAULTS = { maxRounds: 5, maxRequests: 100, maxTokens: 200_000, requestsPerSecond: 1 } as const;
 
@@ -86,6 +91,7 @@ export class ArenaRunsService {
     private readonly scoreboard: ArenaScoreboardService,
     private readonly events: ArenaEventsService,
     @InjectQueue(ARENA_RUN_QUEUE) private readonly queue: Queue<ArenaRunJob>,
+    private readonly config: ConfigService,
   ) {}
 
   // ── Create / list / get ──────────────────────────────
@@ -156,7 +162,7 @@ export class ArenaRunsService {
       ipAddress: meta.ip,
       userAgent: meta.userAgent,
     });
-    return this.toRunView(run, null);
+    return this.toRunView(run, null, actor.role);
   }
 
   async list(organizationId: string, aiTargetId?: string): Promise<RunSummary[]> {
@@ -173,10 +179,10 @@ export class ArenaRunsService {
     return runs.map((r) => this.toSummary(r, rates.get(r.id) ?? null));
   }
 
-  async getView(runId: string, organizationId: string): Promise<RunView> {
+  async getView(runId: string, organizationId: string, role?: string): Promise<RunView> {
     const run = await this.load(runId, organizationId);
     const rates = await this.breachRates([run.id], organizationId);
-    return this.toRunView(run, rates.get(run.id) ?? null);
+    return this.toRunView(run, rates.get(run.id) ?? null, role);
   }
 
   /** Current status only (cheap, org-scoped); used by the SSE endpoint. */
@@ -186,7 +192,7 @@ export class ArenaRunsService {
     return run.status;
   }
 
-  async getDetail(runId: string, organizationId: string): Promise<RunDetailView> {
+  async getDetail(runId: string, organizationId: string, role?: string): Promise<RunDetailView> {
     const run = await this.load(runId, organizationId);
     const [score, recs, goals] = await Promise.all([
       this.scoreboard.compute(runId, organizationId),
@@ -205,7 +211,7 @@ export class ArenaRunsService {
       createdAt: r.createdAt.toISOString(),
     }));
     return {
-      ...this.toRunView(run, score.totals.attempts > 0 ? score.totals.breachRate : null),
+      ...this.toRunView(run, score.totals.attempts > 0 ? score.totals.breachRate : null, role),
       score,
       recommendations,
       goals: goals.map(toGoalView),
@@ -318,7 +324,7 @@ export class ArenaRunsService {
       ipAddress: meta.ip,
       userAgent: meta.userAgent,
     });
-    return this.getView(runId, actor.organizationId);
+    return this.getView(runId, actor.organizationId, actor.role);
   }
 
   /** AWAITING_APPROVAL → APPROVED. Admin only; records consent + RoE version. */
@@ -326,6 +332,7 @@ export class ArenaRunsService {
     if (!(ARENA_APPROVER_ROLES as readonly string[]).includes(actor.role)) {
       throw new ForbiddenException('Only an organization admin can approve a run');
     }
+    await this.assertCurrentRole(actor, ARENA_APPROVER_ROLES);
     const org = actor.organizationId;
     const run = await this.load(runId, org);
     if (run.status !== 'AWAITING_APPROVAL') {
@@ -347,18 +354,7 @@ export class ArenaRunsService {
     const user = await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { name: true } });
     const approvedByName = user?.name ?? 'unknown';
 
-    // Consent must be on record before it takes effect — a failing audit write aborts the approval.
-    await this.audit.logStrict({
-      action: 'arena.run.approved',
-      userId: actor.userId,
-      organizationId: org,
-      resource: 'arena_run',
-      resourceId: runId,
-      metadata: { roeHash: roe.contentHash, roeVersion: roe.version },
-      ipAddress: meta.ip,
-      userAgent: meta.userAgent,
-    });
-
+    // Claim first (conditional on the expected status), audit second; a failing audit rolls the claim back.
     const res = await this.prisma.arenaRun.updateMany({
       where: { id: runId, organizationId: org, status: 'AWAITING_APPROVAL' },
       data: {
@@ -371,7 +367,34 @@ export class ArenaRunsService {
       },
     });
     if (res.count === 0) throw this.conflict('RUN_NOT_AWAITING_APPROVAL', 'Run state changed concurrently');
-    return this.getView(runId, org);
+
+    try {
+      await this.audit.logStrict({
+        action: 'arena.run.approved',
+        userId: actor.userId,
+        organizationId: org,
+        resource: 'arena_run',
+        resourceId: runId,
+        metadata: { roeHash: roe.contentHash, roeVersion: roe.version },
+        ipAddress: meta.ip,
+        userAgent: meta.userAgent,
+      });
+    } catch (err) {
+      this.log.error(`audit write failed, approval of run ${runId} rolled back: ${err instanceof Error ? err.message : String(err)}`);
+      await this.prisma.arenaRun.updateMany({
+        where: { id: runId, organizationId: org, status: 'APPROVED', approvedById: actor.userId },
+        data: {
+          status: 'AWAITING_APPROVAL',
+          roeId: null,
+          emergencyContact: null,
+          approvedById: null,
+          approvedByName: null,
+          approvedAt: null,
+        },
+      });
+      throw this.conflict('AUDIT_FAILED', 'The audit record could not be written — the run was not approved');
+    }
+    return this.getView(runId, org, actor.role);
   }
 
   /** APPROVED → RUNNING after the preflight (contract section 4). Every check fails with a 409 + code. */
@@ -407,59 +430,70 @@ export class ArenaRunsService {
       );
     }
 
-    // 6. kill switch + single run per target
-    if (await this.killSwitch.isKilled(runId)) throw this.conflict('KILL_SWITCH', 'The kill switch is active');
+    // 6. kill switch (run / organization / global) + single run per target
+    if (await this.killSwitch.isKilled(runId, organizationId)) throw this.conflict('KILL_SWITCH', 'The kill switch is active');
     const busy = await this.prisma.arenaRun.findFirst({
       where: { aiTargetId: run.aiTargetId, organizationId, status: 'RUNNING', id: { not: runId } },
       select: { id: true },
     });
     if (busy) throw this.conflict('TARGET_BUSY', 'Another run is already running against this target');
 
-    // 7. audit record — without it, nothing starts
-    try {
-      await this.audit.logStrict({
-        action: 'arena.run.started',
-        userId,
-        organizationId,
-        resource: 'arena_run',
-        resourceId: runId,
-        metadata: {
-          aiTargetId: run.aiTargetId,
-          goalCount: run.goalIds.length,
-          maxRounds: run.maxRounds,
-          maxRequests: run.maxRequests,
-          roeVersion: roe.version,
-        },
-        ipAddress: meta.ip,
-        userAgent: meta.userAgent,
-      });
-    } catch (err) {
-      this.log.error(`audit write failed, run ${runId} not started: ${err instanceof Error ? err.message : String(err)}`);
-      throw this.conflict('AUDIT_FAILED', 'The audit record could not be written — the run was not started');
-    }
+    // Atomic per-target lock (the engine releases it when the run ends).
+    const lockKey = arenaRedisKeys.targetLock(run.aiTargetId);
+    const locked = await this.redis.setIfAbsent(lockKey, runId, TARGET_LOCK_TTL_SECONDS);
+    if (!locked) throw this.conflict('TARGET_BUSY', 'Another run is starting or running against this target');
 
+    let claimed = false;
     const startedAt = new Date();
-    const claim = await this.prisma.arenaRun.updateMany({
-      where: { id: runId, organizationId, status: 'APPROVED' },
-      data: { status: 'RUNNING', startedAt },
-    });
-    if (claim.count === 0) throw this.conflict('RUN_NOT_APPROVED', 'Run state changed concurrently');
-    await this.prisma.scan.update({ where: { id: run.scanId }, data: { status: 'RUNNING', startedAt } });
-
-    try {
-      await this.queue.add(
-        ARENA_RUN_QUEUE,
-        { runId, organizationId },
-        { jobId: `arena-run-${runId}` },
-      );
-    } catch (err) {
-      this.log.error(`queue add failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`);
+    const revertClaim = async (): Promise<void> => {
       await this.prisma.arenaRun.updateMany({
         where: { id: runId, organizationId, status: 'RUNNING' },
         data: { status: 'APPROVED', startedAt: null },
       });
-      await this.prisma.scan.update({ where: { id: run.scanId }, data: { status: 'QUEUED', startedAt: null } });
-      throw new ServiceUnavailableException('The run could not be queued');
+    };
+    try {
+      // 7. claim first (conditional), then the audit record — without it, nothing starts
+      const claim = await this.prisma.arenaRun.updateMany({
+        where: { id: runId, organizationId, status: 'APPROVED' },
+        data: { status: 'RUNNING', startedAt },
+      });
+      if (claim.count === 0) throw this.conflict('RUN_NOT_APPROVED', 'Run state changed concurrently');
+      claimed = true;
+
+      try {
+        await this.audit.logStrict({
+          action: 'arena.run.started',
+          userId,
+          organizationId,
+          resource: 'arena_run',
+          resourceId: runId,
+          metadata: {
+            aiTargetId: run.aiTargetId,
+            goalCount: run.goalIds.length,
+            maxRounds: run.maxRounds,
+            maxRequests: run.maxRequests,
+            roeVersion: roe.version,
+          },
+          ipAddress: meta.ip,
+          userAgent: meta.userAgent,
+        });
+      } catch (err) {
+        this.log.error(`audit write failed, run ${runId} not started: ${err instanceof Error ? err.message : String(err)}`);
+        throw this.conflict('AUDIT_FAILED', 'The audit record could not be written — the run was not started');
+      }
+
+      await this.prisma.scan.update({ where: { id: run.scanId }, data: { status: 'RUNNING', startedAt } });
+      try {
+        await this.queue.add(ARENA_RUN_QUEUE, { runId, organizationId }, { jobId: `arena-run-${runId}` });
+      } catch (err) {
+        this.log.error(`queue add failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`);
+        await this.prisma.scan.update({ where: { id: run.scanId }, data: { status: 'QUEUED', startedAt: null } });
+        throw new ServiceUnavailableException('The run could not be queued');
+      }
+    } catch (err) {
+      if (claimed) await revertClaim();
+      await this.redis.del(lockKey);
+      throw err;
     }
     await this.events.publish(organizationId, runId, { type: 'run.status', status: 'RUNNING' });
   }
@@ -472,7 +506,7 @@ export class ArenaRunsService {
   async abort(runId: string, actor: ArenaActor, reason?: string, meta: RequestMeta = {}): Promise<RunView> {
     const org = actor.organizationId;
     const run = await this.load(runId, org);
-    if ((TERMINAL as readonly string[]).includes(run.status)) return this.getView(runId, org);
+    if ((TERMINAL as readonly string[]).includes(run.status)) return this.getView(runId, org, actor.role);
 
     const abortedReason = reason?.trim() || 'user_requested';
     await this.killSwitch.killRun(runId);
@@ -511,7 +545,7 @@ export class ArenaRunsService {
       await this.events.publish(org, runId, { type: 'run.status', status: 'ABORTED', reason: abortedReason });
       await this.events.publish(org, runId, { type: 'done', status: 'ABORTED' });
     }
-    return this.getView(runId, org);
+    return this.getView(runId, org, actor.role);
   }
 
   /** New DRAFT run with the same goals/budgets, linked via retestOfRunId. */
@@ -536,8 +570,24 @@ export class ArenaRunsService {
     );
   }
 
-  /** Global kill switch (admin). Turning it ON never depends on the audit write; turning it OFF does. */
+  /** True if the actor is listed in ARENA_PLATFORM_ADMINS (user ids or e-mails). Empty/unset: nobody. */
+  isPlatformAdmin(actor: ArenaActor): boolean {
+    const raw = this.config.get<string>('ARENA_PLATFORM_ADMINS') ?? '';
+    const allowed = raw
+      .split(',')
+      .map((x) => x.trim().toLowerCase())
+      .filter((x) => x.length > 0);
+    if (allowed.length === 0) return false;
+    return allowed.includes(actor.userId.toLowerCase()) || (!!actor.email && allowed.includes(actor.email.toLowerCase()));
+  }
+
+  /**
+   * Platform-wide kill switch — platform operators only (never an ordinary org admin).
+   * Turning it ON never depends on the audit write; turning it OFF does.
+   */
   async setGlobalKill(on: boolean, actor: ArenaActor, meta: RequestMeta = {}): Promise<{ on: boolean }> {
+    if (!this.isPlatformAdmin(actor)) throw new ForbiddenException('Only platform operators can use the global kill switch');
+    await this.assertCurrentRole(actor, ARENA_APPROVER_ROLES);
     const event = {
       action: 'arena.kill_switch.global',
       userId: actor.userId,
@@ -555,6 +605,40 @@ export class ArenaRunsService {
       await this.killSwitch.setGlobal(false);
     }
     return { on };
+  }
+
+  /** Kill switch for the actor's own organization (org admin). Same ordering policy as the global one. */
+  async setOrgKill(on: boolean, actor: ArenaActor, meta: RequestMeta = {}): Promise<{ on: boolean }> {
+    await this.assertCurrentRole(actor, ARENA_APPROVER_ROLES);
+    const org = actor.organizationId;
+    const event = {
+      action: 'arena.kill_switch.org',
+      userId: actor.userId,
+      organizationId: org,
+      resource: 'arena',
+      metadata: { on },
+      ipAddress: meta.ip,
+      userAgent: meta.userAgent,
+    };
+    if (on) {
+      await this.killSwitch.setOrg(org, true);
+      await this.audit.logStrict(event);
+    } else {
+      await this.audit.logStrict(event);
+      await this.killSwitch.setOrg(org, false);
+    }
+    return { on };
+  }
+
+  /** Re-reads the role from the database: a demoted/removed member loses access immediately. */
+  private async assertCurrentRole(actor: ArenaActor, allowed: readonly string[]): Promise<void> {
+    const member = await this.prisma.organizationMember.findFirst({
+      where: { userId: actor.userId, organizationId: actor.organizationId },
+      select: { role: true },
+    });
+    if (!member || !allowed.includes(member.role)) {
+      throw new ForbiddenException('Insufficient permissions');
+    }
   }
 
   // ── Preflight building blocks ────────────────────────
@@ -643,7 +727,9 @@ export class ArenaRunsService {
     };
   }
 
-  private toRunView(run: RunRow, breachRate: number | null): RunView {
+  /** The emergency contact is personal data: only operators see it (fail closed without a role). */
+  private toRunView(run: RunRow, breachRate: number | null, role?: string): RunView {
+    const canSeeContact = role !== undefined && (ARENA_OPERATOR_ROLES as readonly string[]).includes(role);
     return {
       ...this.toSummary(run, breachRate),
       goalIds: run.goalIds,
@@ -658,7 +744,7 @@ export class ArenaRunsService {
       roeVersion: run.roe?.version ?? null,
       approvedByName: run.approvedByName,
       approvedAt: run.approvedAt?.toISOString() ?? null,
-      emergencyContact: run.emergencyContact,
+      emergencyContact: canSeeContact ? run.emergencyContact : null,
       retestOfRunId: run.retestOfRunId,
       abortedReason: run.abortedReason,
       scanId: run.scanId,

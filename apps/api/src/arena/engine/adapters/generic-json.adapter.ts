@@ -1,7 +1,7 @@
 import { SafeHttpService } from '../../../ssrf/safe-http.service';
 import type { AdapterClock, AdapterConfig } from './adapter.types';
 import { BaseArenaAdapter, BuiltRequest } from './base.adapter';
-import { getAtPath, setAtPath } from './json-path';
+import { getAtPath, setAtPath, templateProblem } from './json-path';
 import { TargetUnsafeError } from '../run-control';
 
 interface GenericRequestMapping {
@@ -26,6 +26,10 @@ export class GenericJsonAdapter extends BaseArenaAdapter {
 
   protected buildRequest(prompt: string): BuiltRequest {
     const mapping = (this.config.requestMapping ?? {}) as GenericRequestMapping;
+    if (mapping.template !== undefined && mapping.template !== null) {
+      const problem = templateProblem(mapping.template);
+      if (problem) throw new TargetUnsafeError(`Invalid request template: ${problem}`);
+    }
     const body: Record<string, unknown> =
       mapping.template && typeof mapping.template === 'object'
         ? (JSON.parse(JSON.stringify(mapping.template)) as Record<string, unknown>)

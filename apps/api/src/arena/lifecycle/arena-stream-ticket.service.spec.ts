@@ -21,6 +21,14 @@ describe('ArenaStreamTicketService', () => {
     expect(() => s.verify(ticket, 'run1', 3_600_000)).toThrow(UnauthorizedException);
   });
 
+  it('every ticket carries a unique jti', () => {
+    const s = svc();
+    const a = s.verify(s.create('run1', 'org1', 'u1').ticket, 'run1');
+    const b = s.verify(s.create('run1', 'org1', 'u1').ticket, 'run1');
+    expect(a.jti).toMatch(/^[0-9a-f]{32}$/);
+    expect(a.jti).not.toBe(b.jti);
+  });
+
   it('rejects a ticket for another run', () => {
     const s = svc();
     const { ticket } = s.create('run1', 'org1', 'u1');

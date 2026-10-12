@@ -57,3 +57,44 @@ export function setAtPath(root: Record<string, unknown>, path: string, value: un
   }
   return true;
 }
+
+const FORBIDDEN_TEMPLATE_KEYS = new Set([
+  'tools',
+  'tool_choice',
+  'functions',
+  'function_call',
+  '__proto__',
+  'constructor',
+  'prototype',
+]);
+const MAX_TEMPLATE_BYTES = 4096;
+const MAX_TEMPLATE_DEPTH = 6;
+
+/** Returns a reason if a customer-supplied request template is not acceptable, else null. */
+export function templateProblem(template: unknown): string | null {
+  let json: string;
+  try {
+    json = JSON.stringify(template) ?? '';
+  } catch {
+    return 'template is not serializable';
+  }
+  if (Buffer.byteLength(json) > MAX_TEMPLATE_BYTES) return 'template too large';
+  const walk = (v: unknown, depth: number): string | null => {
+    if (depth > MAX_TEMPLATE_DEPTH) return 'template too deep';
+    if (Array.isArray(v)) {
+      for (const x of v) {
+        const p = walk(x, depth + 1);
+        if (p) return p;
+      }
+    } else if (v && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        if (FORBIDDEN_TEMPLATE_KEYS.has(k)) return `forbidden template key: ${k}`;
+        const p = walk(x, depth + 1);
+        if (p) return p;
+      }
+    }
+    return null;
+  };
+  // JSON.parse creates own "__proto__" keys, which Object.entries sees.
+  return walk(template, 1);
+}

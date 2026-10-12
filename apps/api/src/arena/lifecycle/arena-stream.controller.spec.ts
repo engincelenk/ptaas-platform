@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import type { ArenaEvent } from '../arena-events';
-import { ArenaStreamController, SSE_HEARTBEAT_MS } from './arena-stream.controller';
+import { ArenaStreamController, MAX_SSE_PER_ORG, SSE_HEARTBEAT_MS } from './arena-stream.controller';
 import { ArenaStreamTicketService } from './arena-stream-ticket.service';
 
 class FakeRes extends EventEmitter {
@@ -51,8 +51,16 @@ function setup(statuses: string[] = ['RUNNING', 'RUNNING']) {
       return Promise.resolve(unsubscribe);
     }),
   };
-  const ctrl = new ArenaStreamController(tickets, runs as never, scoreboard as never, events as never);
-  return { ctrl, tickets, runs, events, unsubscribe, emit: (e: ArenaEvent) => handler?.(e) };
+  const used = new Set<string>();
+  const redis = {
+    setIfAbsent: vi.fn().mockImplementation((k: string) => {
+      if (used.has(k)) return Promise.resolve(false);
+      used.add(k);
+      return Promise.resolve(true);
+    }),
+  };
+  const ctrl = new ArenaStreamController(tickets, runs as never, scoreboard as never, events as never, redis as never);
+  return { ctrl, redis, tickets, runs, events, unsubscribe, emit: (e: ArenaEvent) => handler?.(e) };
 }
 
 afterEach(() => vi.useRealTimers());
@@ -127,5 +135,28 @@ describe('ArenaStreamController', () => {
     expect(res.frames()).toEqual([{ type: 'run.status', status: 'COMPLETED' }, { type: 'score', score: SCORE }, { type: 'done', status: 'COMPLETED' }]);
     expect(res.writableEnded).toBe(true);
     expect(events.subscribe).not.toHaveBeenCalled();
+  });
+
+  it('a ticket works only once (replay gives 401)', async () => {
+    const { ctrl, tickets, redis } = setup();
+    const { ticket } = tickets.create('run1', 'org1', 'u1');
+    await ctrl.stream('run1', { ticket }, new FakeRes() as never);
+    await expect(ctrl.stream('run1', { ticket }, new FakeRes() as never)).rejects.toThrow(UnauthorizedException);
+    expect(redis.setIfAbsent).toHaveBeenCalledWith(expect.stringContaining('arena:ticket-used:'), '1', 120);
+  });
+
+  it('limits concurrent streams per organization (429) and frees the slot on disconnect', async () => {
+    vi.useFakeTimers();
+    const { ctrl, tickets } = setup();
+    const open: FakeRes[] = [];
+    for (let i = 0; i < MAX_SSE_PER_ORG; i++) {
+      const res = new FakeRes();
+      await ctrl.stream('run1', { ticket: tickets.create('run1', 'org1', 'u1').ticket }, res as never);
+      open.push(res);
+    }
+    const extra = tickets.create('run1', 'org1', 'u1').ticket;
+    await expect(ctrl.stream('run1', { ticket: extra }, new FakeRes() as never)).rejects.toMatchObject({ status: 429 });
+    open[0].emit('close');
+    await expect(ctrl.stream('run1', { ticket: extra }, new FakeRes() as never)).resolves.toBeUndefined();
   });
 });

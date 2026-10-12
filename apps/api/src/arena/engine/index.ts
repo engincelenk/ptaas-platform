@@ -1,5 +1,6 @@
 import type { Provider } from '@nestjs/common';
 import { AdapterFactory } from './adapters/adapter.factory';
+import { ArenaRetentionService } from './arena-retention.service';
 import { ArenaOrchestratorService } from './arena-orchestrator.service';
 import { ArenaRunProcessor } from './arena-run.processor';
 import { ArenaCatalogService } from './catalog/arena-catalog.service';
@@ -25,5 +26,6 @@ export const ENGINE_PROVIDERS: Provider[] = [
   FindingsBridgeService,
   RecommendationService,
   ArenaOrchestratorService,
+  ArenaRetentionService,
   ArenaRunProcessor,
 ];

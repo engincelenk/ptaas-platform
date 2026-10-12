@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 
 export const STREAM_TICKET_TTL_MS = 60_000;
 
@@ -8,6 +8,8 @@ export interface StreamTicketPayload {
   runId: string;
   organizationId: string;
   userId: string;
+  /** unique ticket id; the stream endpoint accepts each id once */
+  jti: string;
   /** epoch ms */
   exp: number;
 }
@@ -34,7 +36,7 @@ export class ArenaStreamTicketService {
     now: number = Date.now(),
   ): { ticket: string; expiresAt: string } {
     const exp = now + STREAM_TICKET_TTL_MS;
-    const payload: StreamTicketPayload = { runId, organizationId, userId, exp };
+    const payload: StreamTicketPayload = { runId, organizationId, userId, jti: randomBytes(16).toString('hex'), exp };
     const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
     return { ticket: `${body}.${this.sign(body)}`, expiresAt: new Date(exp).toISOString() };
   }
@@ -63,6 +65,8 @@ export class ArenaStreamTicketService {
       typeof payload.runId !== 'string' ||
       typeof payload.organizationId !== 'string' ||
       typeof payload.userId !== 'string' ||
+      typeof payload.jti !== 'string' ||
+      payload.jti.length === 0 ||
       typeof payload.exp !== 'number'
     ) {
       return fail();

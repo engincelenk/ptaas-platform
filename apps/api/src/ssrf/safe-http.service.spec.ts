@@ -146,3 +146,17 @@ describe('SafeHttpService.send — real socket', () => {
     expect(res.body.length).toBe(100);
   });
 });
+
+// ─── Header hardening ───
+
+import { stripHopByHopHeaders } from './safe-http.service';
+
+describe('stripHopByHopHeaders', () => {
+  it('drops framing/routing headers regardless of case and keeps normal ones', () => {
+    const out = stripHopByHopHeaders({
+      Host: 'evil.example', 'Content-Length': '1', 'transfer-encoding': 'chunked',
+      Connection: 'keep-alive', 'Proxy-Authorization': 'x', Authorization: 'Bearer k', 'X-Api-Key': 'k',
+    });
+    expect(Object.keys(out).sort()).toEqual(['Authorization', 'X-Api-Key']);
+  });
+});

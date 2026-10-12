@@ -17,6 +17,11 @@ export class RedisService {
     }
   }
 
+  /** Atomic SET key value NX EX ttl. Returns true if the key was set (lock acquired). */
+  async setIfAbsent(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    return (await this.client.set(key, value, 'EX', ttlSeconds, 'NX')) === 'OK';
+  }
+
   async del(...keys: string[]): Promise<void> {
     if (keys.length > 0) {
       await this.client.del(...keys);

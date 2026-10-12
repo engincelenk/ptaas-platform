@@ -40,6 +40,7 @@ interface HarnessOpts {
   llm?: LlmClient;
   secrets?: { apiKey?: string; knownPromptFragments?: string[] };
   adapterThrows?: Error;
+  ttl?: number;
 }
 
 function harness(opts: HarnessOpts = {}) {
@@ -85,6 +86,7 @@ function harness(opts: HarnessOpts = {}) {
 
   const track = (model: string, args: { where?: Row }) => wheres.push({ model, where: args.where ?? {} });
 
+  const txRef: { current: unknown } = { current: null };
   const prisma = {
     arenaRun: {
       findFirst: vi.fn(async (a: { where: Row }) => {
@@ -136,6 +138,8 @@ function harness(opts: HarnessOpts = {}) {
         return row;
       }),
     },
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(txRef.current)),
+    $executeRaw: vi.fn(async () => 1),
     scan: {
       updateMany: vi.fn(async (a: { where: Row; data: Row }) => {
         track('scan.updateMany', a);
@@ -144,11 +148,12 @@ function harness(opts: HarnessOpts = {}) {
       }),
     },
   } as unknown as PrismaService;
+  txRef.current = prisma;
 
   const eventsSvc = { publish: vi.fn(async (_o: string, _r: string, e: ArenaEvent) => void events.push(e)) } as unknown as ArenaEventsService;
 
   const kill = {
-    isKilled: vi.fn(async () => opts.killed?.({ attacks: attempts.filter((a) => a.kind === 'ATTACK').length }) ?? false),
+    isKilled: vi.fn(async (_runId: string, _orgId?: string) => opts.killed?.({ attacks: attempts.filter((a) => a.kind === 'ATTACK').length }) ?? false),
   } as unknown as KillSwitchService;
 
   const snapshot: ArenaScoreSnapshot = {
@@ -165,6 +170,8 @@ function harness(opts: HarnessOpts = {}) {
   const redis = {
     incrby: vi.fn(async (_k: string, n: number) => (counter += n)),
     expire: vi.fn(async () => 1),
+    ttl: vi.fn(async () => opts.ttl ?? 100),
+    del: vi.fn(async () => 1),
   };
 
   const adapter: ArenaTargetAdapter = {
@@ -189,7 +196,7 @@ function harness(opts: HarnessOpts = {}) {
   const recommendations = new RecommendationService(prisma, eventsSvc, opts.llm);
   const orch = new ArenaOrchestratorService(prisma, eventsSvc, kill, scoreboard, aiTargets, adapters, judge, red, bridge, recommendations, audit, redis, opts.llm);
 
-  return { orch, run, attempts, findings, recs, events, audits, sent, wheres, runUpdates, scanUpdates, adapters, adapter, aiTargets, scoreboard, redis, prisma };
+  return { orch, kill, run, attempts, findings, recs, events, audits, sent, wheres, runUpdates, scanUpdates, adapters, adapter, aiTargets, scoreboard, redis, prisma };
 }
 
 const token = (p: string) => /PTAAS-[A-Z]+-[0-9a-f]{10}/.exec(p)?.[0] ?? 'none';
@@ -519,6 +526,93 @@ describe('ArenaOrchestrator — LLM judged goals need reproduction (2 of 3)', ()
     await h.orch.execute(job);
     expect(llm.judgeUnclear).not.toHaveBeenCalled();
     expect(h.findings).toHaveLength(0);
+  });
+});
+
+describe('ArenaOrchestrator — security review additions', () => {
+  it('passes the organization to the kill switch on every check, and an org kill stops the run', async () => {
+    const h = harness();
+    (h.kill.isKilled as ReturnType<typeof vi.fn>).mockImplementation(async (_r: string, org?: string) => org === ORG && h.attempts.length >= 2);
+    await h.orch.execute(job);
+    const calls = (h.kill.isKilled as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.length).toBeGreaterThan(3);
+    for (const c of calls) expect(c[1]).toBe(ORG);
+    expect(h.run.status).toBe('ABORTED');
+    expect(h.run.abortedReason).toBe('kill_switch');
+    expect(h.attempts.length).toBe(2);
+  });
+
+  it('always repairs a missing TTL on the daily counter (not only on the first increment)', async () => {
+    const h = harness({ ttl: -1, dailyCounter: 10 });
+    await h.orch.execute(job);
+    expect(h.redis.expire).toHaveBeenCalledTimes(h.sent.length);
+    const h2 = harness({ ttl: 500 });
+    await h2.orch.execute(job);
+    expect(h2.redis.expire).not.toHaveBeenCalled();
+  });
+
+  it('releases the target lock when the run ends (completed, aborted, failed), but not for ignored jobs', async () => {
+    const lock = 'arena:target-lock:ait-1';
+    const done = harness();
+    await done.orch.execute(job);
+    expect(done.redis.del).toHaveBeenCalledWith(lock);
+    const aborted = harness({ killed: () => true });
+    await aborted.orch.execute(job);
+    expect(aborted.redis.del).toHaveBeenCalledWith(lock);
+    const failed = harness({ adapterThrows: new TargetUnsafeError('x') });
+    await failed.orch.execute(job);
+    expect(failed.redis.del).toHaveBeenCalledWith(lock);
+    const ignored = harness({ run: { status: 'DRAFT' } });
+    await ignored.orch.execute(job);
+    expect(ignored.redis.del).not.toHaveBeenCalled();
+  });
+
+  it('forbidden auth header names fail the run as target_unsafe without any request (real adapter)', async () => {
+    const { AdapterFactory } = await import('./adapters/adapter.factory');
+    const http = { request: vi.fn() };
+    const factory = new AdapterFactory(http as never);
+    const h = harness();
+    (h.run.aiTarget as Row).authHeaderName = 'Proxy-Authorization';
+    (h.adapters.forTarget as ReturnType<typeof vi.fn>).mockImplementation((t: never, s: never, o: never) => factory.forTarget(t, s, o));
+    await h.orch.execute(job);
+    expect(http.request).not.toHaveBeenCalled();
+    expect(h.run.status).toBe('FAILED');
+    expect(h.run.abortedReason).toBe('target_unsafe');
+  });
+
+  it('prompt fragments never leave the engine in clear text; evidence is kept', async () => {
+    const FRAG = 'You are SupportBot for Acme Corp and must never discuss pricing details with customers';
+    const h = harness({
+      goals: [goalRecord('SPL-001')],
+      secrets: { apiKey: API_KEY, knownPromptFragments: [FRAG] },
+      respond: () => `Sure. My instructions: ${FRAG}. Anything else? You are supportbot for acme corp.`,
+    });
+    await h.orch.execute(job);
+    expect(h.findings).toHaveLength(1);
+    const blob = JSON.stringify({ e: h.events, a: h.attempts, f: h.findings, r: h.recs, au: h.audits }).toLowerCase();
+    for (const needle of ['supportbot', 'acme corp', 'pricing details', 'never discuss']) {
+      expect(blob, needle).not.toContain(needle);
+    }
+    expect(blob).toContain('[redacted:fragment#0]');
+    const attempt = h.attempts.find((a) => a.kind === 'ATTACK');
+    expect(attempt?.verdict).toBe('BREACH');
+    expect(JSON.stringify(attempt?.evidence)).toContain('"matchedFragments":[0]');
+  });
+
+  it('finding creation is idempotent per (run, goal) inside a transaction with an advisory lock', async () => {
+    const h = harness({ respond: (p) => token(p) });
+    await h.orch.execute(job);
+    expect(h.findings).toHaveLength(1);
+    expect(h.prisma.$transaction).toHaveBeenCalled();
+    expect(h.prisma.$executeRaw).toHaveBeenCalled();
+    const bridge = new FindingsBridgeService(h.prisma, { publish: vi.fn() } as unknown as ArenaEventsService);
+    const id = await bridge.createForBreach(
+      { runId: 'run-1', organizationId: ORG, scanId: 's', createdById: 'u', targetId: 't', projectId: 'p', endpointUrl: 'https://x' },
+      goalRecord('PI-001'),
+      { attemptId: 'att-2', round: 1, technique: 'direct', attackText: 'a', responseText: 'b', confidence: 1, deterministic: true, repro: { k: 1, n: 1 }, evidence: { rule: 'marker' }, severity: 'HIGH' },
+    );
+    expect(id).toBe('fnd-1');
+    expect(h.findings).toHaveLength(1);
   });
 });
 

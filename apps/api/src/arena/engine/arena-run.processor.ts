@@ -5,7 +5,7 @@ import { ARENA_RUN_QUEUE, ArenaRunJob } from '../arena.constants';
 import { ArenaOrchestratorService } from './arena-orchestrator.service';
 
 /** One job per approved run. Concurrency is low: each run is long-lived and rate-limited towards a customer endpoint. */
-@Processor(ARENA_RUN_QUEUE, { concurrency: 2 })
+@Processor(ARENA_RUN_QUEUE, { concurrency: 1 })
 export class ArenaRunProcessor extends WorkerHost {
   private readonly logger = new Logger(ArenaRunProcessor.name);
 

@@ -1,5 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import { ARENA_LIMITS } from '../../arena.constants';
+import { ARENA_LIMITS, isForbiddenHeaderName } from '../../arena.constants';
 import { SafeHttpService, SafeResponse } from '../../../ssrf/safe-http.service';
 import { ErrorRateExceededError, TargetRequestError, TargetUnsafeError } from '../run-control';
 import type {
@@ -19,7 +19,7 @@ const BASE_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 10_000;
 const ERROR_WINDOW = 6;
 const ERROR_THRESHOLD = 0.5;
-const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+const HEADER_NAME = /^[A-Za-z][A-Za-z0-9-]{0,63}$/;
 
 export interface BuiltRequest {
   headers: Record<string, string>;
@@ -163,11 +163,12 @@ export abstract class BaseArenaAdapter implements ArenaTargetAdapter {
   /** Builds the auth header; header name and value are validated against header injection. */
   protected authHeaders(defaultName: string, bearer: boolean): Record<string, string> {
     const key = this.config.apiKey;
-    if (!key) return {};
     const name = (this.config.authHeaderName ?? defaultName).trim() || defaultName;
-    if (!HEADER_NAME.test(name) || /[\r\n]/.test(key)) {
+    if (!HEADER_NAME.test(name) || isForbiddenHeaderName(name)) {
       throw new TargetUnsafeError('Invalid auth header configuration');
     }
+    if (!key) return {};
+    if ([...key].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) throw new TargetUnsafeError('Invalid auth header configuration');
     const useBearer = bearer && name.toLowerCase() === 'authorization' && !/^bearer\s/i.test(key);
     return { [name]: useBearer ? `Bearer ${key}` : key };
   }

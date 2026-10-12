@@ -16,6 +16,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  Matches,
   MaxLength,
   Min,
   ValidateNested,
@@ -66,7 +67,8 @@ export class CreateAiTargetDto {
   @ApiPropertyOptional({ example: 'Authorization' })
   @IsOptional()
   @IsString()
-  @MaxLength(100)
+  @MaxLength(64)
+  @Matches(/^([A-Za-z][A-Za-z0-9-]{0,63})?$/, { message: 'authHeaderName must be a plain header name' })
   authHeaderName?: string;
 
   @ApiPropertyOptional({ description: 'Write-only. Never returned.' })
@@ -117,7 +119,8 @@ export class UpdateAiTargetDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @MaxLength(100)
+  @MaxLength(64)
+  @Matches(/^([A-Za-z][A-Za-z0-9-]{0,63})?$/, { message: 'authHeaderName must be a plain header name' })
   authHeaderName?: string;
 
   @ApiPropertyOptional({ description: 'Write-only. Empty string removes the key.' })

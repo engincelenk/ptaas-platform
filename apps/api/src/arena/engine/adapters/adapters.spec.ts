@@ -210,6 +210,52 @@ describe('adapters', () => {
     await expect(adapter.send('x')).rejects.toMatchObject({ kind: 'parse' });
   });
 
+  it('rejects forbidden or malformed auth header names at runtime, before any request', async () => {
+    for (const name of ['Host', 'Content-Length', 'Transfer-Encoding', 'Connection', 'Proxy-Authorization', '1Bad', 'X Bad', 'a'.repeat(70)]) {
+      const { http, request } = fakeHttp([ok({})]);
+      const { clock } = fakeClock();
+      const adapter = new AdapterFactory(http).forTarget(target('GENERIC_JSON', { authHeaderName: name }), {}, { clock });
+      await expect(adapter.send('x'), name).rejects.toBeInstanceOf(TargetUnsafeError);
+      expect(request).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rejects unsafe request templates (size, depth, forbidden keys) for GENERIC_JSON and OPENAI extras', async () => {
+    const deep = { a: { b: { c: { d: { e: { f: { g: 1 } } } } } } };
+    const bad: unknown[] = [
+      { template: { tools: [] } },
+      { template: { nested: { tool_choice: 'auto' } } },
+      { template: { functions: [] } },
+      { template: JSON.parse('{"__proto__": {"x": 1}}') },
+      { template: { text: 'x'.repeat(5000) } },
+      { template: deep },
+    ];
+    for (const requestMapping of bad) {
+      const { http, request } = fakeHttp([ok({})]);
+      const { clock } = fakeClock();
+      const adapter = new AdapterFactory(http).forTarget(target('GENERIC_JSON', { requestMapping }), {}, { clock });
+      await expect(adapter.send('x')).rejects.toBeInstanceOf(TargetUnsafeError);
+      expect(request).not.toHaveBeenCalled();
+    }
+    const { http, request } = fakeHttp([ok({})]);
+    const { clock } = fakeClock();
+    const oa = new AdapterFactory(http).forTarget(target('OPENAI_COMPAT', { requestMapping: { extra: { tools: [{}] } } }), {}, { clock });
+    await expect(oa.send('x')).rejects.toBeInstanceOf(TargetUnsafeError);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('accepts a small, safe template', async () => {
+    const { http, calls } = fakeHttp([ok({ text: 'k' })]);
+    const { clock } = fakeClock();
+    const adapter = new AdapterFactory(http).forTarget(
+      target('GENERIC_JSON', { requestMapping: { template: { lang: 'de', opts: { a: 1 } } } }),
+      {},
+      { clock },
+    );
+    expect((await adapter.send('x')).text).toBe('k');
+    expect(JSON.parse(calls[0].opts.body ?? '')).toMatchObject({ lang: 'de', opts: { a: 1 }, prompt: 'x' });
+  });
+
   it('adapter sources never use fetch/axios directly (SafeHttpService only)', () => {
     const dir = __dirname;
     for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.ts') && !n.endsWith('.spec.ts'))) {

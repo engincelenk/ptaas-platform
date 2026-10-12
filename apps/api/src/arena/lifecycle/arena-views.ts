@@ -107,6 +107,7 @@ export interface ArenaActor {
   userId: string;
   organizationId: string;
   role: string;
+  email?: string;
 }
 
 /** UTC day key (yyyymmdd) of the org-wide daily request counter (`arenaRedisKeys.orgDailyRequests`). */

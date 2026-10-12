@@ -1,4 +1,5 @@
 import { ARENA_LIMITS } from '../arena.constants';
+import { maskFragments } from './fragment-mask';
 
 /**
  * Redaction for attempt transcripts. Applied BEFORE persistence and BEFORE SSE publishing.
@@ -28,6 +29,8 @@ const PHONE = /(?<![\w-])\+?\d[\d\s().\/-]{7,}\d(?![\w-])/g;
 export interface RedactOptions {
   /** Exact secret values that must never appear (e.g. the target's API key if it was echoed). */
   secrets?: string[];
+  /** Customer-known system prompt fragments: masked as [REDACTED:FRAGMENT#i]. */
+  fragments?: string[];
   maxChars?: number;
 }
 
@@ -44,6 +47,8 @@ export function redactText(input: string, opts: RedactOptions = {}): string {
   for (const s of opts.secrets ?? []) {
     if (s && s.length >= 6) text = text.split(s).join('[REDACTED:SECRET]');
   }
+
+  if (opts.fragments && opts.fragments.length > 0) text = maskFragments(text, opts.fragments);
 
   // Protect evidence tokens from the (greedy) phone/IBAN patterns.
   const kept: string[] = [];
@@ -66,13 +71,13 @@ export interface RedactedAttempt {
 
 export function redactAttempt(
   attempt: { attackText: string; responseText: string | null },
-  opts: Pick<RedactOptions, 'secrets'> = {},
+  opts: Pick<RedactOptions, 'secrets' | 'fragments'> = {},
 ): RedactedAttempt {
   return {
-    attackText: redactText(attempt.attackText, { secrets: opts.secrets, maxChars: ARENA_LIMITS.maxAttackChars }),
+    attackText: redactText(attempt.attackText, { secrets: opts.secrets, fragments: opts.fragments, maxChars: ARENA_LIMITS.maxAttackChars }),
     responseText:
       attempt.responseText === null
         ? null
-        : redactText(attempt.responseText, { secrets: opts.secrets, maxChars: ARENA_LIMITS.maxResponseChars }),
+        : redactText(attempt.responseText, { secrets: opts.secrets, fragments: opts.fragments, maxChars: ARENA_LIMITS.maxResponseChars }),
   };
 }

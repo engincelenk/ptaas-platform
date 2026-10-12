@@ -29,6 +29,8 @@ export const ARENA_COUNTER_REDIS = 'REDIS_CLIENT';
 export interface ArenaCounterRedis {
   incrby(key: string, n: number): Promise<number>;
   expire(key: string, seconds: number): Promise<unknown>;
+  ttl(key: string): Promise<number>;
+  del(...keys: string[]): Promise<unknown>;
 }
 
 type RunWithTarget = Prisma.ArenaRunGetPayload<{ include: { aiTarget: { include: { target: true } } } }>;
@@ -118,13 +120,22 @@ export class ArenaOrchestratorService {
       goalsTotal: run.goalIds.length,
     };
 
-    let outcome: Outcome;
     try {
-      outcome = await this.runAll(state);
-    } catch (err) {
-      outcome = this.toOutcome(err);
+      let outcome: Outcome;
+      try {
+        outcome = await this.runAll(state);
+      } catch (err) {
+        outcome = this.toOutcome(err);
+      }
+      await this.finalize(state, outcome);
+    } finally {
+      // Release the per-target lock (set by ArenaRunsService.start) no matter how the run ended.
+      try {
+        await this.redis.del(arenaRedisKeys.targetLock(run.aiTargetId));
+      } catch (err) {
+        this.log.error(`could not release target lock: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
-    await this.finalize(state, outcome);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -209,7 +220,7 @@ export class ArenaOrchestratorService {
   /** Called before every round and before every request. Throws RunStopError to end the run cleanly. */
   private async guard(state: RunState): Promise<void> {
     const { run } = state;
-    if (await this.killSwitch.isKilled(run.id)) throw new RunStopError('kill_switch');
+    if (await this.killSwitch.isKilled(run.id, run.organizationId)) throw new RunStopError('kill_switch');
     const now = this.now();
     if (now - state.startedAtMs > MAX_RUN_WALLCLOCK_MS) throw new RunStopError('wallclock_exceeded');
     if (run.windowStart && now < run.windowStart.getTime()) throw new RunStopError('window_not_open');
@@ -224,7 +235,8 @@ export class ArenaOrchestratorService {
       await this.guard(state);
       const key = arenaRedisKeys.orgDailyRequests(state.run.organizationId, arenaUtcDayKey(new Date(this.now())));
       const daily = await this.redis.incrby(key, 1);
-      if (daily === 1) await this.redis.expire(key, 3 * 24 * 3600);
+      // Always make sure the counter expires (a crash between INCR and EXPIRE must not leave an immortal key).
+      if ((await this.redis.ttl(key)) === -1) await this.redis.expire(key, 3 * 24 * 3600);
       if (daily > ARENA_LIMITS.maxRequestsPerOrgPerDay) throw new RunStopError('daily_limit');
       state.usedRequests++;
     };
@@ -263,7 +275,7 @@ export class ArenaOrchestratorService {
       latencyMs: res?.latencyMs ?? null,
     });
     await this.publishAttempt(state, row, firstGoal.key, firstGoal.category);
-    if (res) state.reconSummary = redactAttempt({ attackText: '', responseText: res.text }, { secrets: state.secrets }).responseText ?? undefined;
+    if (res) state.reconSummary = redactAttempt({ attackText: '', responseText: res.text }, { secrets: state.secrets, fragments: state.fragments }).responseText ?? undefined;
     await this.flushUsage(state);
   }
 
@@ -365,13 +377,13 @@ export class ArenaOrchestratorService {
 
       agg.attempts++;
       state.totalAttempts++;
-      history.push({ technique: plan.technique, attackText: plan.prompt, responseText: res?.text ?? null, verdict: verdict.verdict });
+      history.push({ technique: plan.technique, attackText: plan.prompt, responseText: res ? redactAttempt({ attackText: '', responseText: res.text }, { secrets: state.secrets, fragments: state.fragments }).responseText : null, verdict: verdict.verdict });
 
       if (verdict.verdict === 'BREACH') {
         agg.breaches++;
         state.totalBreaches++;
         agg.techniques.add(plan.technique);
-        const red = redactAttempt({ attackText: plan.prompt, responseText: res?.text ?? null }, { secrets: state.secrets });
+        const red = redactAttempt({ attackText: plan.prompt, responseText: res?.text ?? null }, { secrets: state.secrets, fragments: state.fragments });
         breaches.push({
           attemptId: row.id,
           round,
@@ -464,7 +476,7 @@ export class ArenaOrchestratorService {
       latencyMs: number | null;
     },
   ) {
-    const red = redactAttempt({ attackText: a.attackText, responseText: a.responseText }, { secrets: state.secrets });
+    const red = redactAttempt({ attackText: a.attackText, responseText: a.responseText }, { secrets: state.secrets, fragments: state.fragments });
     const expiresAt = new Date(this.now() + ARENA_LIMITS.retentionDays * 24 * 3600 * 1000);
     return this.prisma.arenaAttempt.create({
       data: {

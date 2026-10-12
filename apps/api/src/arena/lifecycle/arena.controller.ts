@@ -34,7 +34,7 @@ import { ArenaRoeService } from './arena-roe.service';
 import { ArenaRunsService } from './arena-runs.service';
 import type { ArenaActor, RequestMeta } from './arena-views';
 
-const actorOf = (u: JwtPayload): ArenaActor => ({ userId: u.sub, organizationId: u.orgId, role: u.role });
+const actorOf = (u: JwtPayload): ArenaActor => ({ userId: u.sub, organizationId: u.orgId, role: u.role, email: u.email });
 const metaOf = (req: Request): RequestMeta => ({ ip: req.ip, userAgent: req.headers['user-agent'] });
 
 /** Operators: ADMIN + SECURITY_ENGINEER (ARENA_OPERATOR_ROLES). Reading is open to every org member. */
@@ -147,7 +147,7 @@ export class ArenaController {
   @Get('runs/:id')
   @ApiOperation({ summary: 'Run detail with score, recommendations and goals' })
   getRun(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.runs.getDetail(id, user.orgId);
+    return this.runs.getDetail(id, user.orgId, user.role);
   }
 
   @Get('runs/:id/attempts')
@@ -183,7 +183,7 @@ export class ArenaController {
   @ApiOperation({ summary: 'Start an approved run (preflight; 409 with reason on failure)' })
   async start(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Req() req: Request) {
     await this.runs.start(id, user.orgId, user.sub, metaOf(req));
-    return this.runs.getView(id, user.orgId);
+    return this.runs.getView(id, user.orgId, user.role);
   }
 
   @Post('runs/:id/abort')
@@ -208,10 +208,18 @@ export class ArenaController {
 
   // ── Admin ────────────────────────────────────────────
 
+  @Post('kill-org')
+  @HttpCode(200)
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Kill switch for the own organization (stops/blocks all its runs)' })
+  killOrg(@Body() dto: KillSwitchDto, @CurrentUser() user: JwtPayload, @Req() req: Request) {
+    return this.runs.setOrgKill(dto.on, actorOf(user), metaOf(req));
+  }
+
   @Post('admin/kill')
   @HttpCode(200)
   @Roles('ADMIN')
-  @ApiOperation({ summary: 'Global kill switch (stops/blocks all runs)' })
+  @ApiOperation({ summary: 'Platform-wide kill switch (only operators listed in ARENA_PLATFORM_ADMINS; 403 otherwise)' })
   kill(@Body() dto: KillSwitchDto, @CurrentUser() user: JwtPayload, @Req() req: Request) {
     return this.runs.setGlobalKill(dto.on, actorOf(user), metaOf(req));
   }
