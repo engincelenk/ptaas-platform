@@ -13,10 +13,10 @@ datasource db {
 // ──────────────────────────────────────────
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String    @map("password_hash")
-  name         String
+  id                      String    @id @default(cuid())
+  email                   String    @unique
+  passwordHash            String    @map("password_hash")
+  name                    String
   emailVerified           Boolean   @default(false) @map("email_verified")
   emailVerificationToken  String?   @unique @map("email_verification_token")
   emailVerificationExpiry DateTime? @map("email_verification_expiry")
@@ -36,16 +36,16 @@ model User {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  memberships       OrganizationMember[]
-  auditLogs         AuditLog[]
-  projects          Project[]
-  targets           Target[]
-  scans             Scan[]
-  findings          Finding[]
-  createdFindings   Finding[]                   @relation("FindingCreatedBy")
-  invitations       Invitation[]
-  apiKeys           ApiKey[]
-  notifications     Notification[]
+  memberships             OrganizationMember[]
+  auditLogs               AuditLog[]
+  projects                Project[]
+  targets                 Target[]
+  scans                   Scan[]
+  findings                Finding[]
+  createdFindings         Finding[]                    @relation("FindingCreatedBy")
+  invitations             Invitation[]
+  apiKeys                 ApiKey[]
+  notifications           Notification[]
   findingComments         FindingComment[]
   findingActivities       FindingActivity[]
   shareTokens             ShareToken[]
@@ -56,7 +56,10 @@ model User {
   approvedRiskAcceptances RiskAcceptance[]             @relation("RiskAcceptanceApprovedBy")
   signedOffEngagements    Engagement[]                 @relation("EngagementSignedOffBy")
   scanSchedules           ScanSchedule[]
-  methodologyProgress     MethodologyProgress[] @relation("MethodologyProgressUser")
+  methodologyProgress     MethodologyProgress[]        @relation("MethodologyProgressUser")
+  createdAiTargets        AiTarget[]                   @relation("AiTargetCreatedBy")
+  createdArenaRuns        ArenaRun[]                   @relation("ArenaRunCreatedBy")
+  approvedArenaRuns       ArenaRun[]                   @relation("ArenaRunApprovedBy")
 
   @@map("users")
 }
@@ -69,10 +72,10 @@ enum Role {
 }
 
 model Organization {
-  id        String  @id @default(cuid())
-  name      String
-  slug      String  @unique
-  logoUrl   String? @map("logo_url")
+  id      String  @id @default(cuid())
+  name    String
+  slug    String  @unique
+  logoUrl String? @map("logo_url")
 
   // White-Label Branding (M46)
   brandPrimaryColor String? @map("brand_primary_color")
@@ -80,8 +83,8 @@ model Organization {
   brandFooterText   String? @map("brand_footer_text")
 
   // Multi-Region (M55)
-  dataRegion      String   @default("eu-west-1") @map("data_region")
-  allowedRegions  String[] @map("allowed_regions")
+  dataRegion     String   @default("eu-west-1") @map("data_region")
+  allowedRegions String[] @map("allowed_regions")
 
   rateLimit      OrgRateLimit?
   usageSnapshots UsageSnapshot[]
@@ -89,27 +92,31 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  members      OrganizationMember[]
-  auditLogs    AuditLog[]
-  projects     Project[]
-  targets      Target[]
-  scans        Scan[]
-  findings     Finding[]
-  assets       Asset[]
-  integrations Integration[]
-  invitations  Invitation[]
-  scanPolicies     ScanPolicy[]
-  apiKeys          ApiKey[]
-  threatBriefs     ThreatBrief[]
-  samlConfig       SamlConfig?
-  evidences        Evidence[]
-  scopeEntries     ScopeEntry[]
-  riskAcceptances  RiskAcceptance[]
-  engagements      Engagement[]
-  findingTags      FindingTag[]
-  slaPolicy        SlaPolicy?
-  scanSchedules    ScanSchedule[]
-  methodologies    Methodology[]
+  members              OrganizationMember[]
+  auditLogs            AuditLog[]
+  projects             Project[]
+  targets              Target[]
+  scans                Scan[]
+  findings             Finding[]
+  assets               Asset[]
+  integrations         Integration[]
+  invitations          Invitation[]
+  scanPolicies         ScanPolicy[]
+  apiKeys              ApiKey[]
+  threatBriefs         ThreatBrief[]
+  samlConfig           SamlConfig?
+  evidences            Evidence[]
+  scopeEntries         ScopeEntry[]
+  riskAcceptances      RiskAcceptance[]
+  engagements          Engagement[]
+  findingTags          FindingTag[]
+  slaPolicy            SlaPolicy?
+  scanSchedules        ScanSchedule[]
+  methodologies        Methodology[]
+  aiTargets            AiTarget[]
+  arenaRuns            ArenaRun[]
+  arenaAttempts        ArenaAttempt[]
+  arenaRecommendations ArenaRecommendation[]
 
   @@map("organizations")
 }
@@ -119,19 +126,19 @@ model Organization {
 // ──────────────────────────────────────────
 
 model SamlConfig {
-  id             String   @id @default(cuid())
-  organizationId String   @unique @map("organization_id")
-  enabled        Boolean  @default(false)
-  idpEntryPoint  String   @map("idp_entry_point")
-  idpCert        String   @map("idp_cert")   @db.Text
-  spEntityId     String   @map("sp_entity_id")
+  id             String  @id @default(cuid())
+  organizationId String  @unique @map("organization_id")
+  enabled        Boolean @default(false)
+  idpEntryPoint  String  @map("idp_entry_point")
+  idpCert        String  @map("idp_cert") @db.Text
+  spEntityId     String  @map("sp_entity_id")
   // SAML attribute → PTaaS field mapping
-  attrEmail      String   @default("email")    @map("attr_email")
-  attrFirstName  String   @default("firstName") @map("attr_first_name")
-  attrLastName   String   @default("lastName")  @map("attr_last_name")
+  attrEmail      String  @default("email") @map("attr_email")
+  attrFirstName  String  @default("firstName") @map("attr_first_name")
+  attrLastName   String  @default("lastName") @map("attr_last_name")
 
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt      @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -139,15 +146,15 @@ model SamlConfig {
 }
 
 model ThreatBrief {
-  id           String    @id @default(cuid())
-  weekStart    DateTime  @map("week_start") @db.Date
-  summary      String
-  highlights   Json      @default("[]")
-  emailSentAt  DateTime? @map("email_sent_at")
-  generatedAt  DateTime  @default(now()) @map("generated_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
+  id          String    @id @default(cuid())
+  weekStart   DateTime  @map("week_start") @db.Date
+  summary     String
+  highlights  Json      @default("[]")
+  emailSentAt DateTime? @map("email_sent_at")
+  generatedAt DateTime  @default(now()) @map("generated_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
-  orgId        String    @map("org_id")
+  orgId        String       @map("org_id")
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, weekStart])
@@ -191,20 +198,20 @@ model Project {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdBy    User         @relation(fields: [createdById], references: [id])
-  targets        Target[]
-  scans          Scan[]
-  findings       Finding[]
-  assets         Asset[]
-  asmScans       AsmScan[]
-  scanStrategies ScanStrategy[]
-  attackPaths    AttackPath[]
-  shareTokens    ShareToken[]
-  checklistItems ChecklistItem[]
-  scopeEntries   ScopeEntry[]
-  engagement     Engagement?
-  scanSchedules  ScanSchedule[]
+  organization           Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy              User                    @relation(fields: [createdById], references: [id])
+  targets                Target[]
+  scans                  Scan[]
+  findings               Finding[]
+  assets                 Asset[]
+  asmScans               AsmScan[]
+  scanStrategies         ScanStrategy[]
+  attackPaths            AttackPath[]
+  shareTokens            ShareToken[]
+  checklistItems         ChecklistItem[]
+  scopeEntries           ScopeEntry[]
+  engagement             Engagement?
+  scanSchedules          ScanSchedule[]
   methodologyAssignments MethodologyAssignment[]
 
   @@index([organizationId])
@@ -220,13 +227,13 @@ model Engagement {
   projectId      String    @unique @map("project_id")
   organizationId String    @map("organization_id")
   title          String
-  type           String    // WEB_APP | API | MOBILE | NETWORK | CLOUD | RED_TEAM
+  type           String // WEB_APP | API | MOBILE | NETWORK | CLOUD | RED_TEAM
   status         String    @default("DRAFT") // DRAFT | ACTIVE | REVIEW | COMPLETED | CANCELLED
   startDate      DateTime? @map("start_date")
   endDate        DateTime? @map("end_date")
   testingHours   Int?      @map("testing_hours")
-  roeText        String?   @db.Text @map("roe_text")
-  scopeNotes     String?   @db.Text @map("scope_notes")
+  roeText        String?   @map("roe_text") @db.Text
+  scopeNotes     String?   @map("scope_notes") @db.Text
   signedOffById  String?   @map("signed_off_by_id")
   signedOffAt    DateTime? @map("signed_off_at")
 
@@ -246,13 +253,13 @@ model Engagement {
 // ──────────────────────────────────────────
 
 model ScopeEntry {
-  id             String   @id @default(cuid())
-  projectId      String   @map("project_id")
-  organizationId String   @map("organization_id")
-  addedById      String   @map("added_by_id")
-  type           String   // URL | IP | CIDR | DOMAIN
+  id             String  @id @default(cuid())
+  projectId      String  @map("project_id")
+  organizationId String  @map("organization_id")
+  addedById      String  @map("added_by_id")
+  type           String // URL | IP | CIDR | DOMAIN
   value          String
-  inScope        Boolean  @default(true) @map("in_scope")
+  inScope        Boolean @default(true) @map("in_scope")
   note           String?
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -272,18 +279,18 @@ model ScopeEntry {
 // ──────────────────────────────────────────
 
 model ChecklistItem {
-  id             String   @id @default(cuid())
-  projectId      String   @map("project_id")
-  organizationId String   @map("organization_id")
+  id             String    @id @default(cuid())
+  projectId      String    @map("project_id")
+  organizationId String    @map("organization_id")
   category       String
-  itemKey        String   @map("item_key")
-  checked        Boolean  @default(false)
-  checkedById    String?  @map("checked_by_id")
+  itemKey        String    @map("item_key")
+  checked        Boolean   @default(false)
+  checkedById    String?   @map("checked_by_id")
   checkedAt      DateTime? @map("checked_at")
   note           String?
 
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt      @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   checkedBy User?   @relation(fields: [checkedById], references: [id], onDelete: SetNull)
@@ -334,34 +341,35 @@ enum VerificationMethod {
 }
 
 model Target {
-  id                 String             @id @default(cuid())
+  id                 String              @id @default(cuid())
   type               TargetType
   value              String
-  verificationStatus VerificationStatus @default(PENDING)
+  verificationStatus VerificationStatus  @default(PENDING)
   verificationMethod VerificationMethod?
-  verificationToken  String             @unique @map("verification_token")
-  verifiedAt         DateTime?          @map("verified_at")
-  lastVerifiedAt     DateTime?          @map("last_verified_at")
+  verificationToken  String              @unique @map("verification_token")
+  verifiedAt         DateTime?           @map("verified_at")
+  lastVerifiedAt     DateTime?           @map("last_verified_at")
 
   projectId      String @map("project_id")
   organizationId String @map("organization_id")
   createdById    String @map("created_by_id")
 
-  scheduleEnabled  Boolean   @default(false) @map("schedule_enabled")
-  scheduleCron     String?   @map("schedule_cron")
-  lastScheduledAt  DateTime? @map("last_scheduled_at")
+  scheduleEnabled Boolean   @default(false) @map("schedule_enabled")
+  scheduleCron    String?   @map("schedule_cron")
+  lastScheduledAt DateTime? @map("last_scheduled_at")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdBy    User         @relation(fields: [createdById], references: [id])
+  project       Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization  Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy     User                @relation(fields: [createdById], references: [id])
   scans         Scan[]
   findings      Finding[]
   asset         Asset?
   healthChecks  TargetHealthCheck[]
   scanSchedules ScanSchedule[]
+  aiTarget      AiTarget?
 
   @@unique([projectId, value])
   @@index([organizationId])
@@ -399,17 +407,18 @@ enum ScanStatus {
 }
 
 enum ScanType {
-  QUICK      // ~5 min, Nuclei common templates, 100 req/s
-  FULL       // ~30-60 min, Nuclei all templates, 30 req/s
-  WEB_CRAWL  // ZAP Spider + Active Scan for JS-rendered pages
-  API_SCAN   // ZAP with OpenAPI/Swagger import → all endpoints
-  RETEST     // Targeted retest of specific findings (M18)
+  QUICK // ~5 min, Nuclei common templates, 100 req/s
+  FULL // ~30-60 min, Nuclei all templates, 30 req/s
+  WEB_CRAWL // ZAP Spider + Active Scan for JS-rendered pages
+  API_SCAN // ZAP with OpenAPI/Swagger import → all endpoints
+  RETEST // Targeted retest of specific findings (M18)
+  AI_ARENA // AI Arena run: red AI vs customer AI endpoint
 }
 
 model Scan {
-  id             String     @id @default(cuid())
-  status         ScanStatus @default(QUEUED)
-  type           ScanType   @default(QUICK)
+  id     String     @id @default(cuid())
+  status ScanStatus @default(QUEUED)
+  type   ScanType   @default(QUICK)
 
   // Nuclei configuration
   templateCategories String[] @default(["cves", "misconfigurations", "exposures"]) @map("template_categories")
@@ -417,11 +426,11 @@ model Scan {
   rateLimit          Int      @default(100) @map("rate_limit")
 
   // Credentials (AES-256-GCM: "iv_hex:authtag_hex:ciphertext_hex") — never plaintext
-  credentialType  String? @map("credential_type")   // "bearer" | "basic" | "cookie"
-  credentialValue String? @map("credential_value")   // encrypted
+  credentialType  String? @map("credential_type") // "bearer" | "basic" | "cookie"
+  credentialValue String? @map("credential_value") // encrypted
 
   // ZAP-specific fields (WEB_CRAWL / API_SCAN)
-  openApiSpec String? @map("open_api_spec")  // URL or inline YAML/JSON
+  openApiSpec String? @map("open_api_spec") // URL or inline YAML/JSON
   crawlDepth  Int     @default(5) @map("crawl_depth")
 
   // Live progress
@@ -460,6 +469,7 @@ model Scan {
   createdBy    User         @relation(fields: [createdById], references: [id])
   policy       ScanPolicy?  @relation(fields: [policyId], references: [id])
   findings     Finding[]
+  arenaRun     ArenaRun?
 
   @@index([organizationId])
   @@index([projectId])
@@ -473,20 +483,20 @@ model Scan {
 // ──────────────────────────────────────────
 
 model AttackPath {
-  id             String   @id @default(cuid())
-  title          String
-  description    String?
-  nodes          Json     @default("[]")  // AttackNode[]
-  edges          Json     @default("[]")  // AttackEdge[]
-  impactScore    Float?   @map("impact_score")
-  likelihood     String?  // LOW | MEDIUM | HIGH | CRITICAL
+  id          String  @id @default(cuid())
+  title       String
+  description String?
+  nodes       Json    @default("[]") // AttackNode[]
+  edges       Json    @default("[]") // AttackEdge[]
+  impactScore Float?  @map("impact_score")
+  likelihood  String? // LOW | MEDIUM | HIGH | CRITICAL
 
-  projectId      String   @map("project_id")
-  organizationId String   @map("organization_id")
+  projectId      String @map("project_id")
+  organizationId String @map("organization_id")
 
-  createdAt      DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
-  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
   @@index([organizationId])
@@ -502,19 +512,19 @@ model AttackPath {
 // ──────────────────────────────────────────
 
 model Notification {
-  id        String    @id @default(cuid())
-  type      String    // scan.completed | finding.critical | retest.passed | retest.failed | invitation | finding.kev
-  title     String
-  body      String?
-  link      String?
-  readAt    DateTime? @map("read_at")
+  id     String    @id @default(cuid())
+  type   String // scan.completed | finding.critical | retest.passed | retest.failed | invitation | finding.kev
+  title  String
+  body   String?
+  link   String?
+  readAt DateTime? @map("read_at")
 
-  userId    String    @map("user_id")
-  orgId     String    @map("org_id")
+  userId String @map("user_id")
+  orgId  String @map("org_id")
 
-  createdAt DateTime  @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([orgId])
@@ -522,20 +532,20 @@ model Notification {
 }
 
 model ScanStrategy {
-  id             String    @id @default(cuid())
-  status         String    @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED
-  fingerprint    Json?
-  plan           Json      @default("[]")
-  reasoning      String?
-  errorMessage   String?   @map("error_message")
+  id           String  @id @default(cuid())
+  status       String  @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED
+  fingerprint  Json?
+  plan         Json    @default("[]")
+  reasoning    String?
+  errorMessage String? @map("error_message")
 
-  projectId      String    @map("project_id")
-  organizationId String    @map("organization_id")
+  projectId      String @map("project_id")
+  organizationId String @map("organization_id")
 
-  createdAt      DateTime  @default(now()) @map("created_at")
-  completedAt    DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
 
-  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
   @@index([organizationId])
@@ -572,10 +582,10 @@ model Finding {
   status      FindingStatus @default(OPEN)
 
   // Nuclei data
-  templateId   String?  @map("template_id")
-  templateName String?  @map("template_name")
-  matchedAt    String?  @map("matched_at")  // URL/endpoint where found
-  nucleiOutput Json?    @map("nuclei_output") // raw nuclei JSON
+  templateId   String? @map("template_id")
+  templateName String? @map("template_name")
+  matchedAt    String? @map("matched_at") // URL/endpoint where found
+  nucleiOutput Json?   @map("nuclei_output") // raw nuclei JSON
 
   // HTTP evidence (truncated — full stored in MinIO)
   httpRequest  String? @map("http_request")
@@ -586,23 +596,23 @@ model Finding {
   cvssVector String?  @map("cvss_vector")
   cveIds     String[] @map("cve_ids")
   cweIds     String[] @map("cwe_ids")
-  owasp      String?  // "A01", "A02", etc.
+  owasp      String? // "A01", "A02", etc.
 
   // AI analysis (M5)
   aiExplanation    String?   @map("ai_explanation")
   aiRemediation    String?   @map("ai_remediation")
-  aiFpScore        Float?    @map("ai_fp_score")        // 0–100 false positive probability
-  aiRiskScore      Float?    @map("ai_risk_score")      // 0–100 severity-adjusted risk
+  aiFpScore        Float?    @map("ai_fp_score") // 0–100 false positive probability
+  aiRiskScore      Float?    @map("ai_risk_score") // 0–100 severity-adjusted risk
   aiBusinessImpact String?   @map("ai_business_impact")
   aiAnalyzedAt     DateTime? @map("ai_analyzed_at")
 
   // AI Risk Scoring v2 (M49) — composite score incl. EPSS, KEV, SLA, trend
-  riskScoreV2         Float?  @map("risk_score_v2")         // 0–100 composite score
-  riskScoreV2Breakdown Json?  @map("risk_score_v2_breakdown") // { cvss, epss, kev, sla, trend }
-  riskScoreV2At       DateTime? @map("risk_score_v2_at")
+  riskScoreV2          Float?    @map("risk_score_v2") // 0–100 composite score
+  riskScoreV2Breakdown Json?     @map("risk_score_v2_breakdown") // { cvss, epss, kev, sla, trend }
+  riskScoreV2At        DateTime? @map("risk_score_v2_at")
 
   // Diff engine (M11)
-  diffStatus String? @map("diff_status")  // NEW | PERSISTING | RESOLVED
+  diffStatus String? @map("diff_status") // NEW | PERSISTING | RESOLVED
 
   // CVE Enrichment (M17)
   epssScore      Float?    @map("epss_score")
@@ -613,19 +623,19 @@ model Finding {
   enrichedAt     DateTime? @map("enriched_at")
 
   // Retest workflow (M18)
-  retestScanId       String?   @map("retest_scan_id")
-  retestStatus       String?   @map("retest_status")       // PENDING | PASSED | FAILED
-  retestRequestedAt  DateTime? @map("retest_requested_at")
-  retestCompletedAt  DateTime? @map("retest_completed_at")
+  retestScanId      String?   @map("retest_scan_id")
+  retestStatus      String?   @map("retest_status") // PENDING | PASSED | FAILED
+  retestRequestedAt DateTime? @map("retest_requested_at")
+  retestCompletedAt DateTime? @map("retest_completed_at")
 
   // Remediation tracking (M28)
-  dueDate      DateTime? @map("due_date")
+  dueDate DateTime? @map("due_date")
 
   // Jira Two-Way Sync (M43)
   jiraIssueKey String? @map("jira_issue_key")
 
   // Deduplication (M38)
-  duplicateOfId String? @map("duplicate_of_id")
+  duplicateOfId String?   @map("duplicate_of_id")
   duplicateOf   Finding?  @relation("Duplicates", fields: [duplicateOfId], references: [id], onDelete: SetNull)
   duplicates    Finding[] @relation("Duplicates")
 
@@ -639,17 +649,18 @@ model Finding {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  scan         Scan         @relation(fields: [scanId], references: [id])
-  target       Target       @relation(fields: [targetId], references: [id])
-  project      Project      @relation(fields: [projectId], references: [id])
-  organization Organization @relation(fields: [organizationId], references: [id])
-  assignedTo   User?        @relation(fields: [assignedToId], references: [id])
-  createdBy    User         @relation("FindingCreatedBy", fields: [createdById], references: [id])
+  scan           Scan                   @relation(fields: [scanId], references: [id])
+  target         Target                 @relation(fields: [targetId], references: [id])
+  project        Project                @relation(fields: [projectId], references: [id])
+  organization   Organization           @relation(fields: [organizationId], references: [id])
+  assignedTo     User?                  @relation(fields: [assignedToId], references: [id])
+  createdBy      User                   @relation("FindingCreatedBy", fields: [createdById], references: [id])
   comments       FindingComment[]
   activities     FindingActivity[]
   evidences      Evidence[]
   riskAcceptance RiskAcceptance?
   tagAssignments FindingTagAssignment[]
+  arenaAttempts  ArenaAttempt[]
 
   @@index([organizationId])
   @@index([projectId])
@@ -678,7 +689,7 @@ model FindingComment {
 
 model FindingActivity {
   id        String   @id @default(cuid())
-  type      String   // status_change | assignee_change | due_date_set | comment | retest_requested | retest_completed
+  type      String // status_change | assignee_change | due_date_set | comment | retest_requested | retest_completed
   payload   Json     @default("{}")
   findingId String   @map("finding_id")
   userId    String?  @map("user_id")
@@ -743,10 +754,10 @@ enum AssetType {
 }
 
 enum AssetStatus {
-  SUGGESTED  // discovered, not yet added as Target
-  ACTIVE     // confirmed online
-  OFFLINE    // discovered but not responding
-  IGNORED    // user dismissed
+  SUGGESTED // discovered, not yet added as Target
+  ACTIVE // confirmed online
+  OFFLINE // discovered but not responding
+  IGNORED // user dismissed
 }
 
 enum AsmScanStatus {
@@ -845,16 +856,16 @@ enum IntegrationType {
 }
 
 model Integration {
-  id             String          @id @default(cuid())
-  organizationId String          @map("organization_id")
-  type           IntegrationType
-  name           String
-  enabled        Boolean         @default(true)
-  configEncrypted String         @map("config_encrypted")
-  events         String[]
+  id              String          @id @default(cuid())
+  organizationId  String          @map("organization_id")
+  type            IntegrationType
+  name            String
+  enabled         Boolean         @default(true)
+  configEncrypted String          @map("config_encrypted")
+  events          String[]
 
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt     @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   deliveries   WebhookDelivery[]
@@ -865,16 +876,16 @@ model Integration {
 }
 
 model WebhookDelivery {
-  id             String   @id @default(cuid())
-  integrationId  String   @map("integration_id")
-  event          String
-  payload        String
-  status         String   @default("PENDING")
-  responseCode   Int?     @map("response_code")
-  responseBody   String?  @map("response_body")
-  attempts       Int      @default(0)
-  lastAttemptAt  DateTime? @map("last_attempt_at")
-  createdAt      DateTime @default(now()) @map("created_at")
+  id            String    @id @default(cuid())
+  integrationId String    @map("integration_id")
+  event         String
+  payload       String
+  status        String    @default("PENDING")
+  responseCode  Int?      @map("response_code")
+  responseBody  String?   @map("response_body")
+  attempts      Int       @default(0)
+  lastAttemptAt DateTime? @map("last_attempt_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
   integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
 
@@ -888,16 +899,16 @@ model WebhookDelivery {
 // ──────────────────────────────────────────
 
 model ScanPolicy {
-  id             String   @id @default(cuid())
-  organizationId String   @map("organization_id")
+  id             String  @id @default(cuid())
+  organizationId String  @map("organization_id")
   name           String
   description    String?
 
-  nucleiTags          String[] @default([]) @map("nuclei_tags")
-  nucleiSeverities    String[] @default([]) @map("nuclei_severities")
-  excludedTemplates   String[] @default([]) @map("excluded_templates")
-  maxDurationSeconds  Int      @default(3600) @map("max_duration_seconds")
-  rateLimit           Int      @default(150) @map("rate_limit")
+  nucleiTags         String[] @default([]) @map("nuclei_tags")
+  nucleiSeverities   String[] @default([]) @map("nuclei_severities")
+  excludedTemplates  String[] @default([]) @map("excluded_templates")
+  maxDurationSeconds Int      @default(3600) @map("max_duration_seconds")
+  rateLimit          Int      @default(150) @map("rate_limit")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -934,13 +945,13 @@ model UsageSnapshot {
 
 // M56 — Per-org rate limits
 model OrgRateLimit {
-  id                 String   @id @default(cuid())
-  orgId              String   @unique @map("org_id")
-  requestsPerMinute  Int      @default(100) @map("requests_per_minute")
-  requestsPerHour    Int      @default(3000) @map("requests_per_hour")
-  burstSize          Int      @default(20) @map("burst_size")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  id                String   @id @default(cuid())
+  orgId             String   @unique @map("org_id")
+  requestsPerMinute Int      @default(100) @map("requests_per_minute")
+  requestsPerHour   Int      @default(3000) @map("requests_per_hour")
+  burstSize         Int      @default(20) @map("burst_size")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
@@ -975,15 +986,15 @@ model ApiKey {
 // ──────────────────────────────────────────
 
 model Evidence {
-  id             String   @id @default(cuid())
-  findingId      String   @map("finding_id")
-  organizationId String   @map("organization_id")
-  uploadedById   String   @map("uploaded_by_id")
+  id             String  @id @default(cuid())
+  findingId      String  @map("finding_id")
+  organizationId String  @map("organization_id")
+  uploadedById   String  @map("uploaded_by_id")
   filename       String
-  originalName   String   @map("original_name")
-  mimeType       String   @map("mime_type")
+  originalName   String  @map("original_name")
+  mimeType       String  @map("mime_type")
   size           Int
-  storagePath    String   @map("storage_path")
+  storagePath    String  @map("storage_path")
   caption        String?
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -1006,7 +1017,7 @@ model RiskAcceptance {
   findingId      String    @unique @map("finding_id")
   organizationId String    @map("organization_id")
   approvedById   String    @map("approved_by_id")
-  decision       String    // ACCEPTED | DEFERRED | FALSE_POSITIVE
+  decision       String // ACCEPTED | DEFERRED | FALSE_POSITIVE
   justification  String    @db.Text
   expiresAt      DateTime? @map("expires_at")
   reviewedAt     DateTime  @default(now()) @map("reviewed_at")
@@ -1029,14 +1040,14 @@ model RiskAcceptance {
 // ──────────────────────────────────────────
 
 model FindingTag {
-  id             String   @id @default(cuid())
-  organizationId String   @map("organization_id")
+  id             String @id @default(cuid())
+  organizationId String @map("organization_id")
   name           String
-  color          String   @default("#6366f1") // hex color
+  color          String @default("#6366f1") // hex color
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   assignments  FindingTagAssignment[]
 
   @@unique([organizationId, name])
@@ -1063,9 +1074,9 @@ model SlaPolicy {
   id             String @id @default(cuid())
   organizationId String @unique @map("organization_id")
 
-  criticalDays Int @default(7)   @map("critical_days")
-  highDays     Int @default(30)  @map("high_days")
-  mediumDays   Int @default(90)  @map("medium_days")
+  criticalDays Int @default(7) @map("critical_days")
+  highDays     Int @default(30) @map("high_days")
+  mediumDays   Int @default(90) @map("medium_days")
   lowDays      Int @default(180) @map("low_days")
   infoDays     Int @default(365) @map("info_days")
 
@@ -1081,20 +1092,20 @@ model SlaPolicy {
 // ──────────────────────────────────────────
 
 model ScanSchedule {
-  id             String   @id @default(cuid())
-  organizationId String   @map("organization_id")
-  projectId      String   @map("project_id")
-  targetId       String   @map("target_id")
-  scanType       String   @default("QUICK") @map("scan_type")
-  cronExpr       String   @map("cron_expr")
-  isActive       Boolean  @default(true) @map("is_active")
-  policyId       String?  @map("policy_id")
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  projectId      String    @map("project_id")
+  targetId       String    @map("target_id")
+  scanType       String    @default("QUICK") @map("scan_type")
+  cronExpr       String    @map("cron_expr")
+  isActive       Boolean   @default(true) @map("is_active")
+  policyId       String?   @map("policy_id")
   lastRunAt      DateTime? @map("last_run_at")
   nextRunAt      DateTime? @map("next_run_at")
-  createdById    String   @map("created_by_id")
+  createdById    String    @map("created_by_id")
 
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt     @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -1119,9 +1130,9 @@ model Methodology {
   preset         String  @default("CUSTOM") // OWASP_TG_V42 | PTES | CUSTOM
 
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt     @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   checks       MethodologyCheck[]
   assignments  MethodologyAssignment[]
 
@@ -1137,7 +1148,7 @@ model MethodologyCheck {
   category      String  @default("General")
   sortOrder     Int     @default(0) @map("sort_order")
 
-  methodology Methodology             @relation(fields: [methodologyId], references: [id], onDelete: Cascade)
+  methodology Methodology           @relation(fields: [methodologyId], references: [id], onDelete: Cascade)
   progress    MethodologyProgress[]
 
   @@index([methodologyId])
@@ -1145,15 +1156,15 @@ model MethodologyCheck {
 }
 
 model MethodologyAssignment {
-  id            String @id @default(cuid())
-  methodologyId String @map("methodology_id")
-  projectId     String @map("project_id")
+  id             String @id @default(cuid())
+  methodologyId  String @map("methodology_id")
+  projectId      String @map("project_id")
   organizationId String @map("organization_id")
 
   assignedAt DateTime @default(now()) @map("assigned_at")
 
-  methodology Methodology          @relation(fields: [methodologyId], references: [id], onDelete: Cascade)
-  project     Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  methodology Methodology           @relation(fields: [methodologyId], references: [id], onDelete: Cascade)
+  project     Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   progress    MethodologyProgress[]
 
   @@unique([methodologyId, projectId])
@@ -1162,20 +1173,224 @@ model MethodologyAssignment {
 }
 
 model MethodologyProgress {
-  id             String  @id @default(cuid())
-  assignmentId   String  @map("assignment_id")
-  checkId        String  @map("check_id")
-  organizationId String  @map("organization_id")
-  completed      Boolean @default(false)
-  notes          String? @db.Text
-  completedById  String? @map("completed_by_id")
+  id             String    @id @default(cuid())
+  assignmentId   String    @map("assignment_id")
+  checkId        String    @map("check_id")
+  organizationId String    @map("organization_id")
+  completed      Boolean   @default(false)
+  notes          String?   @db.Text
+  completedById  String?   @map("completed_by_id")
   completedAt    DateTime? @map("completed_at")
 
-  assignment   MethodologyAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  check        MethodologyCheck      @relation(fields: [checkId], references: [id], onDelete: Cascade)
-  completedBy  User?                 @relation("MethodologyProgressUser", fields: [completedById], references: [id])
+  assignment  MethodologyAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  check       MethodologyCheck      @relation(fields: [checkId], references: [id], onDelete: Cascade)
+  completedBy User?                 @relation("MethodologyProgressUser", fields: [completedById], references: [id])
 
   @@unique([assignmentId, checkId])
   @@index([assignmentId])
   @@map("methodology_progress")
+}
+
+// ═══ AI Arena (Phase 5) ═══
+
+enum ArenaAdapter {
+  OPENAI_COMPAT
+  ANTHROPIC
+  GENERIC_JSON
+}
+
+enum ArenaRunStatus {
+  DRAFT
+  AWAITING_APPROVAL
+  APPROVED
+  RUNNING
+  COMPLETED
+  ABORTED
+  FAILED
+}
+
+enum ArenaGoalCategory {
+  PROMPT_INJECTION
+  SYSTEM_PROMPT_LEAK
+  SENSITIVE_DISCLOSURE
+  JAILBREAK
+  OUTPUT_HANDLING
+}
+
+enum ArenaAttemptKind {
+  RECON
+  ATTACK
+}
+
+enum ArenaVerdict {
+  BREACH // Verteidigung des Kunden wurde überwunden
+  BLOCKED // Verteidigung hat gehalten
+  UNCLEAR // manuelle Prüfung
+}
+
+model AiTarget {
+  id                            String       @id @default(cuid())
+  organizationId                String       @map("organization_id")
+  targetId                      String       @unique @map("target_id") // verifiziertes Target (Typ URL)
+  name                          String
+  adapter                       ArenaAdapter
+  // Request/Response-Mapping für GENERIC_JSON (JSON-Pfad-Angaben, keine Secrets)
+  requestMapping                Json?        @map("request_mapping")
+  responseMapping               Json?        @map("response_mapping")
+  authHeaderName                String?      @map("auth_header_name") // z. B. "Authorization"
+  // AES-256-GCM v2, AAD = orgId:aiTargetId:<feld>
+  apiKeyEncrypted               String?      @map("api_key_encrypted")
+  knownPromptFragmentsEncrypted String?      @map("known_prompt_fragments_encrypted")
+  canaryPlacedAt                DateTime?    @map("canary_placed_at") // Kunde bestätigt Canary-Platzierung
+  createdById                   String       @map("created_by_id")
+  createdAt                     DateTime     @default(now()) @map("created_at")
+  updatedAt                     DateTime     @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  target       Target       @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("AiTargetCreatedBy", fields: [createdById], references: [id])
+  runs         ArenaRun[]
+
+  @@index([organizationId])
+  @@map("ai_targets")
+}
+
+/// Plattformweiter, versionierter Rules-of-Engagement-Text (unveränderlich).
+model ArenaRoe {
+  id          String   @id @default(cuid())
+  version     Int      @unique
+  content     String   @db.Text
+  contentHash String   @map("content_hash")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  runs ArenaRun[]
+
+  @@map("arena_roe")
+}
+
+/// Plattformweiter, kuratierter Angriffskatalog (Stellvertreter-Ziele).
+model ArenaGoal {
+  id              String            @id @default(cuid())
+  key             String            @unique // z. B. "PI-001"
+  version         Int               @default(1)
+  category        ArenaGoalCategory
+  title           String
+  description     String            @db.Text
+  owaspRef        String?           @map("owasp_ref") // z. B. "LLM01"
+  atlasRef        String?           @map("atlas_ref") // z. B. "AML.T0051"
+  baseSeverity    Severity          @map("base_severity")
+  seedAttacks     Json              @map("seed_attacks") // string[]
+  successCriteria Json              @map("success_criteria")
+  active          Boolean           @default(true)
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  attempts ArenaAttempt[]
+
+  @@index([category])
+  @@map("arena_goals")
+}
+
+model ArenaRun {
+  id             String         @id @default(cuid())
+  organizationId String         @map("organization_id")
+  aiTargetId     String         @map("ai_target_id")
+  scanId         String         @unique @map("scan_id") // Scan vom Typ AI_ARENA
+  status         ArenaRunStatus @default(DRAFT)
+  goalIds        String[]       @map("goal_ids")
+
+  // Budget / Limits (Soll)
+  maxRounds         Int       @default(5) @map("max_rounds")
+  maxRequests       Int       @default(100) @map("max_requests")
+  maxTokens         Int       @default(200000) @map("max_tokens")
+  requestsPerSecond Float     @default(1) @map("requests_per_second")
+  windowStart       DateTime? @map("window_start")
+  windowEnd         DateTime? @map("window_end")
+  // Verbrauch (Ist)
+  usedRequests      Int       @default(0) @map("used_requests")
+  usedTokens        Int       @default(0) @map("used_tokens")
+
+  // Freigabe / RoE (nur Org-Admin)
+  roeId            String?   @map("roe_id")
+  emergencyContact String?   @map("emergency_contact")
+  approvedById     String?   @map("approved_by_id")
+  approvedByName   String?   @map("approved_by_name")
+  approvedAt       DateTime? @map("approved_at")
+
+  // Reproduzierbarkeit
+  modelVersions Json? @map("model_versions") // { red, judge, promptVersions }
+
+  // Retest: Verweis auf den Vor-Run
+  retestOfRunId String? @map("retest_of_run_id")
+
+  abortedReason String?   @map("aborted_reason")
+  startedAt     DateTime? @map("started_at")
+  completedAt   DateTime? @map("completed_at")
+  createdById   String    @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  organization    Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aiTarget        AiTarget              @relation(fields: [aiTargetId], references: [id], onDelete: Cascade)
+  scan            Scan                  @relation(fields: [scanId], references: [id])
+  roe             ArenaRoe?             @relation(fields: [roeId], references: [id])
+  approvedBy      User?                 @relation("ArenaRunApprovedBy", fields: [approvedById], references: [id])
+  createdBy       User                  @relation("ArenaRunCreatedBy", fields: [createdById], references: [id])
+  retestOf        ArenaRun?             @relation("ArenaRetest", fields: [retestOfRunId], references: [id], onDelete: SetNull)
+  retests         ArenaRun[]            @relation("ArenaRetest")
+  attempts        ArenaAttempt[]
+  recommendations ArenaRecommendation[]
+
+  @@index([organizationId])
+  @@index([aiTargetId])
+  @@index([status])
+  @@map("arena_runs")
+}
+
+model ArenaAttempt {
+  id             String           @id @default(cuid())
+  runId          String           @map("run_id")
+  organizationId String           @map("organization_id")
+  goalId         String           @map("goal_id")
+  round          Int
+  kind           ArenaAttemptKind
+  technique      String // z. B. "base64", "roleplay"
+  attackText     String           @map("attack_text") @db.Text // redacted
+  responseText   String?          @map("response_text") @db.Text // redacted
+  verdict        ArenaVerdict?
+  confidence     Float?
+  evidence       Json? // deterministische Belege (Canary, Fragment …)
+  repro          Json? // { k, n }
+  tokens         Int              @default(0)
+  latencyMs      Int?             @map("latency_ms")
+  findingId      String?          @map("finding_id") // bei bestätigtem Durchbruch
+  expiresAt      DateTime         @map("expires_at") // Retention (Default +30 Tage)
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  run          ArenaRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  goal         ArenaGoal    @relation(fields: [goalId], references: [id])
+  finding      Finding?     @relation(fields: [findingId], references: [id], onDelete: SetNull)
+
+  @@index([runId, round])
+  @@index([organizationId])
+  @@index([expiresAt])
+  @@map("arena_attempts")
+}
+
+model ArenaRecommendation {
+  id             String            @id @default(cuid())
+  runId          String            @map("run_id")
+  organizationId String            @map("organization_id")
+  category       ArenaGoalCategory
+  title          String
+  text           String            @db.Text
+  priority       Int               @default(2) // 1 hoch … 3 niedrig
+  createdAt      DateTime          @default(now()) @map("created_at")
+
+  run          ArenaRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([organizationId])
+  @@map("arena_recommendations")
 }
