@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import * as dns from 'dns';
-import { SsrfGuardService } from '../ssrf/ssrf-guard.service';
+import { SafeHttpService } from '../ssrf/safe-http.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 
@@ -13,7 +13,7 @@ export class VerificationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly ssrfGuard: SsrfGuardService,
+    private readonly safeHttp: SafeHttpService,
   ) {}
 
   async verify(
@@ -108,55 +108,20 @@ export class VerificationService {
     const url = `https://${domain}/.well-known/ptaas-verify.txt`;
     const expected = `${VERIFY_PREFIX}=${token}`;
 
-    await this.ssrfGuard.assertSafeHost(domain);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
-
     try {
-      const res = await fetch(url, {
-        signal: controller.signal,
-        redirect: 'follow',
+      const res = await this.safeHttp.requestFollowing(url, {
+        timeoutMs: HTTP_TIMEOUT_MS,
+        maxBytes: MAX_RESPONSE_BYTES,
         headers: { 'User-Agent': 'PTaaS-Verifier/1.0' },
       });
-
-      // Reject redirects to different hosts
-      if (res.url) {
-        const redirectHost = new URL(res.url).hostname;
-        if (redirectHost !== domain) {
-          await this.ssrfGuard.assertSafeHost(redirectHost);
-        }
-      }
-
-      if (!res.ok) {
+      if (res.status < 200 || res.status >= 300) {
         return { success: false, message: `HTTP ${res.status} from ${url}` };
       }
-
-      // Read only the first MAX_RESPONSE_BYTES to avoid DoS
-      const reader = res.body?.getReader();
-      if (!reader) return { success: false, message: 'Empty response body' };
-
-      let content = '';
-      let bytes = 0;
-      while (bytes < MAX_RESPONSE_BYTES) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes += value.length;
-        content += new TextDecoder().decode(value);
-      }
-      await reader.cancel();
-
-      const trimmed = content.trim();
-      return trimmed === expected
+      return res.body.trim() === expected
         ? { success: true, message: 'HTTP file verified' }
         : { success: false, message: `File content mismatch. Expected: ${expected}` };
     } catch (err) {
-      if ((err as Error).name === 'AbortError') {
-        return { success: false, message: `Request to ${url} timed out` };
-      }
-      return { success: false, message: (err as Error).message };
-    } finally {
-      clearTimeout(timeout);
+      return { success: false, message: err instanceof Error ? err.message : 'Request failed' };
     }
   }
 
@@ -168,60 +133,33 @@ export class VerificationService {
   ): Promise<{ success: boolean; message: string }> {
     const url = `https://${domain}/`;
 
-    await this.ssrfGuard.assertSafeHost(domain);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
-
+    let html: string;
     try {
-      const res = await fetch(url, {
-        signal: controller.signal,
-        redirect: 'follow',
+      const res = await this.safeHttp.requestFollowing(url, {
+        timeoutMs: HTTP_TIMEOUT_MS,
+        maxBytes: 65_536, // meta tag must be in <head>
         headers: { 'User-Agent': 'PTaaS-Verifier/1.0', Accept: 'text/html' },
       });
-
-      if (!res.ok) {
+      if (res.status < 200 || res.status >= 300) {
         return { success: false, message: `HTTP ${res.status} fetching homepage` };
       }
-
-      // Read only first 64KB — meta tag must be in <head>
-      const reader = res.body?.getReader();
-      if (!reader) return { success: false, message: 'Empty response' };
-
-      let html = '';
-      let bytes = 0;
-      while (bytes < 65_536) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes += value.length;
-        html += new TextDecoder().decode(value);
-        // Stop after </head>
-        if (html.includes('</head>') || html.includes('</HEAD>')) break;
-      }
-      await reader.cancel();
-
-      // Look for <meta name="ptaas-verify" content="{token}">
-      const pattern = new RegExp(
-        `<meta[^>]+name=["']ptaas-verify["'][^>]+content=["']${escapeRegex(token)}["']`,
-        'i',
-      );
-      const altPattern = new RegExp(
-        `<meta[^>]+content=["']${escapeRegex(token)}["'][^>]+name=["']ptaas-verify["']`,
-        'i',
-      );
-
-      const found = pattern.test(html) || altPattern.test(html);
-      return found
-        ? { success: true, message: 'Meta tag verified' }
-        : { success: false, message: `ptaas-verify meta tag with token not found on ${domain}` };
+      html = res.body;
     } catch (err) {
-      if ((err as Error).name === 'AbortError') {
-        return { success: false, message: `Request to ${url} timed out` };
-      }
-      return { success: false, message: (err as Error).message };
-    } finally {
-      clearTimeout(timeout);
+      return { success: false, message: err instanceof Error ? err.message : 'Request failed' };
     }
+
+    // Look for <meta name="ptaas-verify" content="{token}">
+    const pattern = new RegExp(
+      `<meta[^>]+name=["']ptaas-verify["'][^>]+content=["']${escapeRegex(token)}["']`,
+      'i',
+    );
+    const altPattern = new RegExp(
+      `<meta[^>]+content=["']${escapeRegex(token)}["'][^>]+name=["']ptaas-verify["']`,
+      'i',
+    );
+    return pattern.test(html) || altPattern.test(html)
+      ? { success: true, message: 'Meta tag verified' }
+      : { success: false, message: `ptaas-verify meta tag with token not found on ${domain}` };
   }
 }
 
