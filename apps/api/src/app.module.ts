@@ -26,6 +26,7 @@ import { AsmModule } from './asm/asm.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { ArenaModule } from './arena/arena.module';
+import { ScheduleModule } from '@nestjs/schedule';
 import { MailModule } from './mail/mail.module';
 import { InvitationsModule } from './invitations/invitations.module';
 import { ComplianceModule } from './compliance/compliance.module';
@@ -62,6 +63,7 @@ import { MarketplaceModule } from './marketplace/marketplace.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, cache: true }),
+    ScheduleModule.forRoot(),
 
     LoggerModule.forRoot({
       pinoHttp: {

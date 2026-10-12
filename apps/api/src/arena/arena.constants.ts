@@ -16,6 +16,11 @@ export const ARENA_LIMITS = {
   maxRequestsPerOrgPerDay: 2_000,
   maxAttackChars: 4_000,
   maxResponseChars: 8_000,
+  maxRagDocsPerRun: 10,
+  maxRagDocChars: 4_000,
+  ragIndexingDelayMaxMs: 60_000,
+  widgetResponseTimeoutMaxMs: 60_000,
+  maxToolCallsRecorded: 20,
   retentionDays: 30,
   verificationTtlDays: 30,
 } as const;

@@ -18,6 +18,8 @@ export interface ArenaAttemptView {
   verdict: 'BREACH' | 'BLOCKED' | 'UNCLEAR' | null;
   confidence: number | null;
   findingId: string | null;
+  /** AGENT targets: redacted tool calls observed in the reply (stage 3). */
+  toolCalls?: { name: string; arguments: string }[];
   createdAt: string;
 }
 

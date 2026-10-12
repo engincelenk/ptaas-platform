@@ -1197,6 +1197,20 @@ enum ArenaAdapter {
   OPENAI_COMPAT
   ANTHROPIC
   GENERIC_JSON
+  WIDGET // browser-driven web chat widget (stage 4)
+}
+
+/// What kind of customer AI system is under test (stages 1-4).
+enum ArenaTargetKind {
+  CHAT // plain chat endpoint, no tools (stage 1)
+  RAG // retrieval-augmented system (stage 2)
+  AGENT // agent with tools — staging only (stage 3)
+  WIDGET // chat widget reachable only through a web page (stage 4)
+}
+
+enum ArenaEnvironment {
+  STAGING
+  PRODUCTION
 }
 
 enum ArenaRunStatus {
@@ -1215,6 +1229,8 @@ enum ArenaGoalCategory {
   SENSITIVE_DISCLOSURE
   JAILBREAK
   OUTPUT_HANDLING
+  INDIRECT_INJECTION // RAG: instructions hidden in retrieved documents
+  EXCESSIVE_AGENCY // agent: tool use beyond what was asked / allowed
 }
 
 enum ArenaAttemptKind {
@@ -1229,22 +1245,31 @@ enum ArenaVerdict {
 }
 
 model AiTarget {
-  id                            String       @id @default(cuid())
-  organizationId                String       @map("organization_id")
-  targetId                      String       @unique @map("target_id") // verifiziertes Target (Typ URL)
+  id                            String           @id @default(cuid())
+  organizationId                String           @map("organization_id")
+  targetId                      String           @unique @map("target_id") // verifiziertes Target (Typ URL)
   name                          String
   adapter                       ArenaAdapter
   // Request/Response-Mapping für GENERIC_JSON (JSON-Pfad-Angaben, keine Secrets)
-  requestMapping                Json?        @map("request_mapping")
-  responseMapping               Json?        @map("response_mapping")
-  authHeaderName                String?      @map("auth_header_name") // z. B. "Authorization"
+  requestMapping                Json?            @map("request_mapping")
+  responseMapping               Json?            @map("response_mapping")
+  authHeaderName                String?          @map("auth_header_name") // z. B. "Authorization"
   // AES-256-GCM v2, AAD = orgId:aiTargetId:<feld>
-  apiKeyEncrypted               String?      @map("api_key_encrypted")
-  knownPromptFragmentsEncrypted String?      @map("known_prompt_fragments_encrypted")
-  canaryPlacedAt                DateTime?    @map("canary_placed_at") // Kunde bestätigt Canary-Platzierung
-  createdById                   String       @map("created_by_id")
-  createdAt                     DateTime     @default(now()) @map("created_at")
-  updatedAt                     DateTime     @updatedAt @map("updated_at")
+  apiKeyEncrypted               String?          @map("api_key_encrypted")
+  knownPromptFragmentsEncrypted String?          @map("known_prompt_fragments_encrypted")
+  canaryPlacedAt                DateTime?        @map("canary_placed_at") // Kunde bestätigt Canary-Platzierung
+  // Stages 2-4
+  kind                          ArenaTargetKind  @default(CHAT)
+  environment                   ArenaEnvironment @default(PRODUCTION)
+  ragConfig                     Json?            @map("rag_config") // ingest/delete mapping (no secrets) or manual placement
+  agentConfig                   Json?            @map("agent_config") // dry-run header, tool-call trace path (no secrets)
+  widgetConfig                  Json?            @map("widget_config") // page URL + selectors (no secrets)
+  ragDocsPlacedAt               DateTime?        @map("rag_docs_placed_at") // manual placement confirmed by customer
+  stagingConfirmedAt            DateTime?        @map("staging_confirmed_at") // AGENT: customer attests staging
+  sandboxAttestedAt             DateTime?        @map("sandbox_attested_at") // AGENT: tools are dry-run/sandboxed
+  createdById                   String           @map("created_by_id")
+  createdAt                     DateTime         @default(now()) @map("created_at")
+  updatedAt                     DateTime         @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   target       Target       @relation(fields: [targetId], references: [id], onDelete: Cascade)
@@ -1280,6 +1305,7 @@ model ArenaGoal {
   atlasRef        String?           @map("atlas_ref") // z. B. "AML.T0051"
   baseSeverity    Severity          @map("base_severity")
   seedAttacks     Json              @map("seed_attacks") // string[]
+  kinds           ArenaTargetKind[] @default([CHAT, RAG, AGENT, WIDGET]) // target kinds this goal applies to
   successCriteria Json              @map("success_criteria")
   active          Boolean           @default(true)
   createdAt       DateTime          @default(now()) @map("created_at")
@@ -1317,6 +1343,7 @@ model ArenaRun {
   approvedAt       DateTime? @map("approved_at")
 
   // Reproduzierbarkeit
+  artifacts     Json? @map("artifacts") // planted RAG documents + cleanup status, tool-call traces
   modelVersions Json? @map("model_versions") // { red, judge, promptVersions }
 
   // Retest: Verweis auf den Vor-Run

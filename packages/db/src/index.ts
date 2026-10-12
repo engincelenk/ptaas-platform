@@ -4,6 +4,8 @@ export type { User, Organization, OrganizationMember, AuditLog, Role } from './g
 export {
   ArenaAdapter,
   ArenaAttemptKind,
+  ArenaEnvironment,
+  ArenaTargetKind,
   ArenaGoalCategory,
   ArenaRunStatus,
   ArenaVerdict,
