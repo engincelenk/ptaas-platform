@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { apiClient } from '@/lib/api-client';
+import { apiUrl } from '@/lib/api-client';
 
 interface AuditEntry {
   id: string;
@@ -204,7 +205,7 @@ export default function AuditPage() {
     const from = rangeToFrom(range);
     if (from) params.set('from', from);
     const token = localStorage.getItem('ptaas_access_token') ?? '';
-    const url = `${process.env.NEXT_PUBLIC_API_URL}/organizations/${orgId}/audit/export?${params}&token=${token}`;
+    const url = `${apiUrl(`/organizations/${orgId}/audit/export`)}?${params}&token=${token}`;
     const a = document.createElement('a');
     a.href = url;
     a.download = `audit-trail-${new Date().toISOString().slice(0, 10)}.csv`;

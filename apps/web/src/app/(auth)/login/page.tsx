@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
+import { apiUrl } from '@/lib/api-client';
 
 type Step = 'credentials' | 'mfa' | 'mfa-setup' | 'locked';
 
@@ -326,12 +327,11 @@ function MfaStep({
 function SsoButton() {
   const [open, setOpen] = useState(false);
   const [slug, setSlug] = useState('');
-  const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
   function handleSso(e: React.FormEvent) {
     e.preventDefault();
     if (!slug.trim()) return;
-    window.location.href = `${API_URL}/auth/saml/${slug.trim()}/login`;
+    window.location.href = apiUrl(`/auth/saml/${slug.trim()}/login`);
   }
 
   if (!open) {

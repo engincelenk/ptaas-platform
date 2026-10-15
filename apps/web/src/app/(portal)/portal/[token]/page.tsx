@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { apiUrl } from '@/lib/api-client';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 const SEVERITY_COLOR: Record<string, string> = {
   CRITICAL: 'bg-red-600',
@@ -63,11 +63,11 @@ export default function PortalPage() {
     const load = async () => {
       try {
         const [s, f] = await Promise.all([
-          fetch(`${API}/portal/${token}/summary`).then(async (r) => {
+          fetch(apiUrl(`/portal/${token}/summary`)).then(async (r) => {
             if (!r.ok) throw new Error(((await r.json()) as { message?: string }).message ?? 'Invalid link');
             return r.json() as Promise<Summary>;
           }),
-          fetch(`${API}/portal/${token}/findings`).then((r) => r.json() as Promise<Finding[]>),
+          fetch(apiUrl(`/portal/${token}/findings`)).then((r) => r.json() as Promise<Finding[]>),
         ]);
         setSummary(s);
         setFindings(f);

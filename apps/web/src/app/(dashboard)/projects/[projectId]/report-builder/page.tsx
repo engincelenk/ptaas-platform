@@ -11,6 +11,7 @@ import {
   FileText, ChevronUp, ChevronDown, GripVertical,
   CheckSquare, Square, Download, Eye,
 } from 'lucide-react';
+import { apiUrl } from '@/lib/api-client';
 
 interface Finding {
   id: string;
@@ -124,7 +125,7 @@ export default function ReportBuilderPage() {
         ? (document.cookie.match(/(?:^|;\s*)accessToken=([^;]*)/) ?? [])[1] ?? ''
         : '';
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? ''}/projects/${projectId}/reports/custom.pdf`, {
+      const res = await fetch(apiUrl(`/projects/${projectId}/reports/custom.pdf`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

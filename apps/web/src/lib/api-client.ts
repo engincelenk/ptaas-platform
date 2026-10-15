@@ -1,5 +1,13 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
+/** API host only (no /api/v1 prefix). */
+export const API_ORIGIN = API_BASE;
+
+/** Builds a full API URL: `<host>/api/v1<path>` (path must start with `/`). */
+export function apiUrl(path: string): string {
+  return `${API_ORIGIN}/api/v1${path}`;
+}
+
 async function request<T>(
   method: string,
   path: string,

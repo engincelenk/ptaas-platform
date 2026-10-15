@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Lock, ShieldAlert, ShieldCheck, Info } from 'lucide-react';
+import { apiUrl } from '@/lib/api-client';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 const SEV_COLORS: Record<string, string> = {
   CRITICAL: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
@@ -64,7 +64,7 @@ export default function ShareReportPage() {
     setLoading(true);
     setError(null);
     try {
-      const url = `${API}/public/share/${token}${pw ? `?password=${encodeURIComponent(pw)}` : ''}`;
+      const url = `${apiUrl(`/public/share/${token}`)}${pw ? `?password=${encodeURIComponent(pw)}` : ''}`;
       const res = await fetch(url);
       if (res.status === 401) { setNeedsPassword(true); setLoading(false); return; }
       if (!res.ok) {

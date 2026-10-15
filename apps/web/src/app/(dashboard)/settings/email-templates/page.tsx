@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Mail, ExternalLink, Monitor, Smartphone } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { apiUrl } from '@/lib/api-client';
 
 interface Template {
   id: string;
@@ -78,10 +79,9 @@ export default function EmailTemplatesPage() {
   const [selected, setSelected] = useState<Template | null>(null);
   const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop');
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
   const token = typeof window !== 'undefined' ? localStorage.getItem('ptaas_access_token') ?? '' : '';
   const previewSrc = selected
-    ? `${apiUrl}/admin/mail/preview?template=${selected.id}&token=${encodeURIComponent(token)}`
+    ? `${apiUrl('/admin/mail/preview')}?template=${selected.id}&token=${encodeURIComponent(token)}`
     : null;
 
   return (

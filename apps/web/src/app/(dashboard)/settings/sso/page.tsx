@@ -5,8 +5,9 @@ import {
   ShieldCheck, ExternalLink, Copy, CheckCheck, AlertTriangle,
   Save, Trash2, Info,
 } from 'lucide-react';
+import { apiUrl } from '@/lib/api-client';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const API_URL = apiUrl('');
 
 interface SamlConfig {
   id: string;
@@ -116,7 +117,7 @@ export default function SsoSettingsPage() {
   }
 
   const metadataUrl = config
-    ? `${API_URL.replace('/api', '')}/api/auth/saml/${config.organizationId}/metadata`
+    ? apiUrl(`/auth/saml/${config.organizationId}/metadata`)
     : null;
 
   async function copyMetadataUrl() {

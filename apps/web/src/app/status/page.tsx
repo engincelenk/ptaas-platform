@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle, RefreshCw } from 'lucide-react';
+import { apiUrl } from '@/lib/api-client';
 
 interface ServiceStatus {
   name: string;
@@ -41,12 +42,11 @@ export default function StatusPage() {
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/status`);
+      const res = await fetch(apiUrl('/status'));
       const json: StatusData = await res.json();
       setData(json);
       setLastRefresh(new Date());
@@ -59,7 +59,7 @@ export default function StatusPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiUrl]);
+  }, []);
 
   useEffect(() => {
     load();

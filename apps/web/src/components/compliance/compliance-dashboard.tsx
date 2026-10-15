@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ShieldCheck, ShieldAlert, ShieldX, HelpCircle, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiClient } from '@/lib/api-client';
+import { apiUrl } from '@/lib/api-client';
 
 type CategoryStatus = 'COMPLIANT' | 'WARNING' | 'CRITICAL' | 'UNCHECKED';
 
@@ -103,7 +104,7 @@ export function ComplianceDashboard({ projectId }: { projectId: string }) {
     try {
       const token = localStorage.getItem('ptaas_access_token') ?? '';
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/projects/${projectId}/compliance/pdf`,
+        apiUrl(`/projects/${projectId}/compliance/pdf`),
         { headers: { Authorization: `Bearer ${token}` } },
       );
       const blob = await res.blob();

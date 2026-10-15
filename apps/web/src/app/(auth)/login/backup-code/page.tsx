@@ -3,6 +3,7 @@
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { apiUrl } from '@/lib/api-client';
 
 function BackupCodeForm() {
   const router = useRouter();
@@ -22,7 +23,7 @@ function BackupCodeForm() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/login/backup-code`, {
+      const res = await fetch(apiUrl('/auth/login/backup-code'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tempToken, backupCode: backupCode.toUpperCase().trim() }),

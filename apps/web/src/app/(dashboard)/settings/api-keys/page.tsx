@@ -97,8 +97,8 @@ export default function ApiKeysPage() {
   );
 
   const apiBase = typeof window !== 'undefined'
-    ? window.location.origin.replace(':3000', ':3001')
-    : 'https://api.ptaas.example.com';
+    ? `${window.location.origin.replace(':3000', ':3001')}/api/v1`
+    : 'https://api.ptaas.example.com/api/v1';
 
   return (
     <div className="max-w-3xl space-y-6">

@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { apiUrl } from '@/lib/api-client';
 
 interface Target {
   id: string;
@@ -83,7 +84,7 @@ export function ImportFindingsDialog({ projectId, targets, onClose, onImported }
       fd.append('deduplication', String(deduplication));
 
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/projects/${projectId}/findings/import/${fmt.endpoint}`,
+        apiUrl(`/projects/${projectId}/findings/import/${fmt.endpoint}`),
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },

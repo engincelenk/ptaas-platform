@@ -6,8 +6,9 @@ import {
   FileText, FileSpreadsheet, Download, ExternalLink, Clock,
   ShieldCheck, BarChart3, FileJson, TableProperties, CheckSquare,
 } from 'lucide-react';
+import { apiUrl } from '@/lib/api-client';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const API_URL = apiUrl('');
 
 interface Report {
   id: string;

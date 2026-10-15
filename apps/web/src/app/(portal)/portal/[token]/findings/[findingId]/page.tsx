@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { apiUrl } from '@/lib/api-client';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 const SEVERITY_TEXT: Record<string, string> = {
   CRITICAL: 'text-red-700 bg-red-50 border-red-200',
@@ -38,7 +38,7 @@ export default function PortalFindingPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch(`${API}/portal/${token}/findings/${findingId}`)
+    fetch(apiUrl(`/portal/${token}/findings/${findingId}`))
       .then(async (r) => {
         if (!r.ok) throw new Error(((await r.json()) as { message?: string }).message ?? 'Not found');
         return r.json() as Promise<Finding>;

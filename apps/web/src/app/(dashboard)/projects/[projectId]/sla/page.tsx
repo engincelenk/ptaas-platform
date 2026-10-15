@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { apiClient } from '@/lib/api-client';
 import { Clock, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { apiUrl } from '@/lib/api-client';
 
 type SlaStatus = 'ON_TRACK' | 'AT_RISK' | 'BREACHED';
 
@@ -66,7 +67,7 @@ export default function SlaPage() {
           <h1 className="text-2xl font-bold text-gray-900">SLA Tracking</h1>
         </div>
         <a
-          href={`${process.env.NEXT_PUBLIC_API_URL}/projects/${projectId}/reports/sla.pdf?token=${typeof window !== 'undefined' ? localStorage.getItem('ptaas_access_token') ?? '' : ''}`}
+          href={`${apiUrl(`/projects/${projectId}/reports/sla.pdf`)}?token=${typeof window !== 'undefined' ? localStorage.getItem('ptaas_access_token') ?? '' : ''}`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 transition-colors"

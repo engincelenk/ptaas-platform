@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { apiClient } from '@/lib/api-client';
+import { apiClient, API_ORIGIN } from '@/lib/api-client';
 import { TrendChart } from '@/components/monitoring/trend-chart';
 import { ComplianceDashboard } from '@/components/compliance/compliance-dashboard';
 import { AiStrategyDialog } from '@/components/strategy/ai-strategy-dialog';
@@ -118,7 +118,7 @@ export default function ProjectPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [execReportOpen, setExecReportOpen] = useState(false);
   const [healthMap, setHealthMap] = useState<Record<string, { isUp: boolean; statusCode?: number | null; responseTimeMs?: number | null }>>({});
-  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? '';
+  const apiBase = API_ORIGIN;
 
   useEffect(() => {
     Promise.all([

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { apiUrl } from '@/lib/api-client';
 
 export type ScanEventType = 'progress' | 'status' | 'terminal' | 'error';
 
@@ -43,7 +44,7 @@ export function useScanEvents({
   useEffect(() => {
     if (!enabled || !token || !scanId) return;
 
-    const url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/projects/${projectId}/scans/${scanId}/events`;
+    const url = apiUrl(`/projects/${projectId}/scans/${scanId}/events`);
 
     // SSE requires token in query param since EventSource doesn't support headers
     const es = new EventSource(`${url}?token=${encodeURIComponent(token)}`);
