@@ -58,7 +58,7 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const isDev = configService.get('NODE_ENV') !== 'production';
   app.enableCors({
-    origin: isDev ? '*' : configService.get('FRONTEND_URL'),
+    origin: configService.get('FRONTEND_URL') ?? (isDev ? 'http://localhost:3000' : undefined),
     credentials: true,
   });
 
