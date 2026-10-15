@@ -333,6 +333,14 @@ describe('ArenaOrchestrator — full runs', () => {
 });
 
 describe('ArenaOrchestrator — limits and stops', () => {
+  it('keeps the operator abort reason when the kill switch finalizes the run (found by the real-DB E2E)', async () => {
+    const h = harness({ killed: ({ attacks }) => attacks >= 1 });
+    h.run.abortedReason = 'operator: customer asked to stop';
+    await h.orch.execute(job);
+    expect(h.run.status).toBe('ABORTED');
+    expect(h.run.abortedReason).toBe('operator: customer asked to stop');
+  });
+
   it('kill switch is checked before every round and request and stops before the next round', async () => {
     const h = harness({ killed: ({ attacks }) => attacks >= 1 });
     await h.orch.execute(job);

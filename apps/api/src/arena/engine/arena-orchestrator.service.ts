@@ -920,12 +920,22 @@ export class ArenaOrchestratorService {
     }
 
     try {
+      // An operator's abort reason (written by ArenaRunsService.abort while the run was RUNNING) must survive
+      // finalization; the engine's machine reason ("kill_switch") is only the fallback.
+      let abortedReason = outcome.reason ?? null;
+      if (outcome.status === 'ABORTED') {
+        const current = await this.prisma.arenaRun.findFirst({
+          where: { id: run.id, organizationId: orgId },
+          select: { abortedReason: true },
+        });
+        abortedReason = current?.abortedReason || abortedReason;
+      }
       await this.prisma.arenaRun.updateMany({
         where: { id: run.id, organizationId: orgId },
         data: {
           status: outcome.status,
           completedAt: new Date(this.now()),
-          abortedReason: outcome.reason ?? null,
+          abortedReason,
           usedRequests: state.usedRequests,
           usedTokens: state.usedTokens,
           ...(Object.keys(state.artifacts).length > 0 ? { artifacts: state.artifacts as Prisma.InputJsonValue } : {}),
