@@ -15,6 +15,11 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [totpCode, setTotpCode] = useState('');
+
+  // Local development only (DEV_AUTH_BYPASS): no login needed, the dashboard fetches its own session.
+  useEffect(() => {
+    if (process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === '1') router.replace('/arena');
+  }, [router]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(null);

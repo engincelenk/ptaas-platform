@@ -9,7 +9,7 @@ import { NotificationBell } from '@/components/notifications/notification-bell';
 import { WelcomeModal } from '@/components/onboarding/welcome-modal';
 import { GlobalSearch, SearchTrigger } from '@/components/search/global-search';
 import { ThemeToggle } from '@/components/theme/theme-toggle';
-import { apiClient } from '@/lib/api-client';
+import { apiClient, apiUrl } from '@/lib/api-client';
 
 const navItems: { href: string; label: string; highlight?: boolean }[] = [
   { href: '/arena', label: 'AI Arena', highlight: true },
@@ -45,10 +45,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem('ptaas_access_token');
-    if (!token) { router.replace('/login'); return; }
-    const payload = parseJwt(token);
-    if (payload?.orgId) setOrgId(payload.orgId);
+    // Local development only: with DEV_AUTH_BYPASS the API hands out a session token without login.
+    // The API refuses the bypass outside NODE_ENV=development, so this flag grants nothing elsewhere.
+    async function getToken(): Promise<string | null> {
+      const stored = localStorage.getItem('ptaas_access_token');
+      if (stored || process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS !== '1') return stored;
+      try {
+        const res = await fetch(apiUrl('/auth/dev-session'));
+        if (!res.ok) return null;
+        const { accessToken } = (await res.json()) as { accessToken: string };
+        localStorage.setItem('ptaas_access_token', accessToken);
+        return accessToken;
+      } catch {
+        return null;
+      }
+    }
+
+    void getToken().then((token) => {
+      if (!token) { router.replace('/login'); return; }
+      const payload = parseJwt(token);
+      if (payload?.orgId) setOrgId(payload.orgId);
+    });
 
     // Show welcome modal only once, only if org has no projects
     if (!localStorage.getItem(WELCOME_SHOWN_KEY)) {

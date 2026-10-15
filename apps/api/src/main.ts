@@ -7,6 +7,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { assertDevAuthBypassAllowed, installDevAuthBypass, isDevAuthBypassRequested } from './auth/dev-auth-bypass';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true, rawBody: true });
@@ -61,6 +62,10 @@ async function bootstrap() {
     origin: configService.get('FRONTEND_URL') ?? (isDev ? 'http://localhost:3000' : undefined),
     credentials: true,
   });
+
+  // Local development only: DEV_AUTH_BYPASS=1 authenticates every request as the dev user (refuses outside development)
+  assertDevAuthBypassAllowed();
+  if (isDevAuthBypassRequested()) installDevAuthBypass(app);
 
   // Global API prefix
   app.setGlobalPrefix('api/v1');
