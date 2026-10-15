@@ -15,10 +15,13 @@
     "test:e2e": "npm run test:e2e --workspace=apps/web",
     "db:generate": "npm run db:generate --workspace=packages/db",
     "db:migrate": "npm run db:migrate --workspace=packages/db",
-    "db:studio": "npm run db:studio --workspace=packages/db"
+    "db:studio": "npm run db:studio --workspace=packages/db",
+    "e2e:infra:start": "node scripts/e2e/infra.mjs start",
+    "e2e:infra:stop": "node scripts/e2e/infra.mjs stop"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
+    "embedded-postgres": "16.14.0-beta.17",
     "typescript": "^5.6.0",
     "wait-on": "^9.0.10"
   },

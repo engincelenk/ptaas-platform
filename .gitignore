@@ -53,3 +53,6 @@ apps/api/uploads/*
 !apps/api/uploads/.gitkeep
 playwright-report/
 test-results/
+
+# local e2e infrastructure (portable postgres/redis data)
+.testenv/
