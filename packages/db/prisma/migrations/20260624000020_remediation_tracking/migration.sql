@@ -1,12 +1,19 @@
 -- Add assignedToId and dueDate to findings
-ALTER TABLE "findings" ADD COLUMN "assigned_to_id" TEXT;
-ALTER TABLE "findings" ADD COLUMN "due_date" TIMESTAMP(3);
+-- assigned_to_id and its FK already exist since 20260623000003_scans_findings, so a fresh
+-- `prisma migrate deploy` failed here with 42701 (column already exists). Made idempotent.
+ALTER TABLE "findings" ADD COLUMN IF NOT EXISTS "assigned_to_id" TEXT;
+ALTER TABLE "findings" ADD COLUMN IF NOT EXISTS "due_date" TIMESTAMP(3);
 
-ALTER TABLE "findings" ADD CONSTRAINT "findings_assigned_to_id_fkey"
-    FOREIGN KEY ("assigned_to_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'findings_assigned_to_id_fkey') THEN
+    ALTER TABLE "findings" ADD CONSTRAINT "findings_assigned_to_id_fkey"
+      FOREIGN KEY ("assigned_to_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
-CREATE INDEX "findings_assigned_to_id_idx" ON "findings"("assigned_to_id");
-CREATE INDEX "findings_due_date_idx" ON "findings"("due_date");
+CREATE INDEX IF NOT EXISTS "findings_assigned_to_id_idx" ON "findings"("assigned_to_id");
+CREATE INDEX IF NOT EXISTS "findings_due_date_idx" ON "findings"("due_date");
 
 -- FindingComment
 CREATE TABLE "finding_comments" (

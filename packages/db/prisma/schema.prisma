@@ -344,8 +344,8 @@ model Target {
   id                 String              @id @default(cuid())
   type               TargetType
   value              String
-  verificationStatus VerificationStatus  @default(PENDING)
-  verificationMethod VerificationMethod?
+  verificationStatus VerificationStatus  @default(PENDING) @map("verification_status")
+  verificationMethod VerificationMethod? @map("verification_method")
   verificationToken  String              @unique @map("verification_token")
   verifiedAt         DateTime?           @map("verified_at")
   lastVerifiedAt     DateTime?           @map("last_verified_at")
