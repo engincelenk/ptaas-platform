@@ -26,6 +26,7 @@ import { RolesGuard } from './guards/roles.guard';
   ],
   controllers: [AuthController],
   providers: [AuthService, TokenService, MfaService, JwtStrategy, JwtAuthGuard, RolesGuard],
-  exports: [JwtAuthGuard, RolesGuard, TokenService],
+  // JwtModule is re-exported so PortalModule can inject JwtService (the app failed to boot without it).
+  exports: [JwtAuthGuard, RolesGuard, TokenService, JwtModule],
 })
 export class AuthModule {}

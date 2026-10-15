@@ -8,9 +8,11 @@ import { EnrichmentModule } from '../enrichment/enrichment.module';
 import { RetestModule } from '../retest/retest.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AiModule } from '../ai/ai.module';
+import { IntegrationsModule } from '../integrations/integrations.module';
+import { MonitoringModule } from '../monitoring/monitoring.module';
 
 @Module({
-  imports: [ScansModule, AuditModule, FindingsModule, AsmModule, EnrichmentModule, RetestModule, NotificationsModule, AiModule],
+  imports: [ScansModule, AuditModule, FindingsModule, AsmModule, EnrichmentModule, RetestModule, NotificationsModule, AiModule, IntegrationsModule, MonitoringModule],
   controllers: [InternalController],
 })
 export class InternalModule {}
